@@ -1,0 +1,6 @@
+node_modules/
+.tmp-ext/
+.tmp-chrome-profile/
+.screenshots/
+*.log
+dist/

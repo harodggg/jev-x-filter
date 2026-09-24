@@ -1,0 +1,63 @@
+{
+  "manifest_version": 3,
+  "name": "黄推过滤器 · Jev",
+  "version": "0.2.0",
+  "description": "用 Jev（TypeSafe System One 类型化决策）在本地判定 x.com 时间线/回复/推荐流中的色情推广，高置信度自动静音/拉黑，支持黑名单导入导出。",
+  "minimum_chrome_version": "120",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://twitter.com/*",
+    "https://pbs.twimg.com/*",
+    "https://video.twimg.com/*",
+    "https://api.typesafe.ai/*",
+    "https://opencode.ai/*",
+    "https://openrouter.ai/*",
+    "https://ai-gateway.vercel.sh/*"
+  ],
+  "background": {
+    "service_worker": "src/sw/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://x.com/*",
+        "https://twitter.com/*"
+      ],
+      "js": [
+        "src/content/selectors.js",
+        "src/content/extract.js",
+        "src/content/content.js"
+      ],
+      "css": [
+        "src/content/content.css"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_title": "黄推过滤器 · Jev",
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_ui": {
+    "page": "src/options/options.html",
+    "open_in_tab": true
+  }
+}

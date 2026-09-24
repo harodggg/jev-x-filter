@@ -1,0 +1,82 @@
+/* 黄推过滤器 · Jev —— 内容脚本样式
+   隐藏方式：保留 <article> 本身、只藏它的子节点，并在内部插入一条解释条。
+   这样不会破坏 X 虚拟列表的节点结构（避免滚动错位），也方便一键还原。 */
+
+article[data-jevx-hidden='1'] {
+  min-height: 0 !important;
+  border-bottom: 1px solid rgba(239, 243, 244, 0.12) !important;
+  padding: 0 !important;
+}
+
+article[data-jevx-hidden='1'] > *:not(.jevx-bar) {
+  display: none !important;
+}
+
+article[data-jevx-hidden='1'] .jevx-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  color: #536471;
+  background: rgba(244, 33, 46, 0.06);
+  border-left: 3px solid rgba(244, 33, 46, 0.55);
+}
+
+article[data-jevx-hidden='1'] .jevx-bar.jevx-review {
+  background: rgba(255, 173, 31, 0.1);
+  border-left-color: rgba(255, 173, 31, 0.7);
+}
+
+html[data-jevx-theme='dark'] article[data-jevx-hidden='1'] .jevx-bar,
+body[data-jevx-dark='1'] article[data-jevx-hidden='1'] .jevx-bar {
+  color: #8b98a5;
+}
+
+.jevx-bar .jevx-tag {
+  font-weight: 700;
+  color: #f4212e;
+}
+
+.jevx-bar.jevx-review .jevx-tag {
+  color: #b7791f;
+}
+
+.jevx-bar .jevx-reason {
+  flex: 1 1 220px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.9;
+}
+
+.jevx-bar button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid rgba(83, 100, 113, 0.45);
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.jevx-bar button:hover {
+  background: rgba(15, 20, 25, 0.06);
+}
+
+.jevx-bar button.jevx-danger {
+  border-color: rgba(244, 33, 46, 0.6);
+  color: #f4212e;
+}
+
+.jevx-bar button[disabled] {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.jevx-bar .jevx-score {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}

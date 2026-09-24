@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>黄推过滤器 · Jev</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="head">
+      <strong>黄推过滤器 · Jev</strong>
+      <span id="version" class="muted"></span>
+    </div>
+
+    <label class="switch">
+      <input type="checkbox" id="enabled" />
+      <span>启用过滤</span>
+    </label>
+    <label class="switch">
+      <input type="checkbox" id="autoMute" />
+      <span>自动静音命中账号</span>
+    </label>
+    <label class="switch">
+      <input type="checkbox" id="muteOnHide" />
+      <span>连「隐藏」档也静音（激进）</span>
+    </label>
+    <label class="switch">
+      <input type="checkbox" id="dryRun" />
+      <span>演练模式（只记录，不真的点菜单）</span>
+    </label>
+
+    <div id="mode" class="status">读取中…</div>
+    <div id="status" class="status">读取中…</div>
+    <div id="stats" class="stats"></div>
+
+    <div class="row">
+      <button id="options" class="primary">打开设置</button>
+      <button id="export">导出黑名单</button>
+      <button id="clear-cache">清空缓存</button>
+    </div>
+
+    <div class="audit-title">最近判定</div>
+    <pre id="audit"></pre>
+    <div class="muted" style="margin-top: 6px">状态栏徽标显示当前标签页已过滤的条数。</div>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

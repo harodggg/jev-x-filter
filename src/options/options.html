@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>黄推过滤器 · Jev 设置</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <header>
+      <h1>黄推过滤器 · Jev</h1>
+      <p class="sub">
+        判定引擎：<strong>Jev（TypeSafe System One）</strong> 类型化决策 —— 只问「是不是色情/是否引流」并拿到概率与置信度，
+        高置信度才动作。所有网络请求都发生在扩展后台，密钥不下发到页面。
+      </p>
+      <div class="row">
+        <span id="api-status" class="pill">读取中…</span>
+        <span id="api-error" class="pill warn" hidden></span>
+        <button id="save" class="primary">保存设置</button>
+        <button id="reload">重新读取</button>
+        <span id="save-note" class="note"></span>
+      </div>
+    </header>
+
+    <main>
+      <section>
+        <h2>1. Jev 接入</h2>
+        <div class="grid">
+          <label>
+            <span>服务提供方</span>
+            <select data-path="api.preset" id="preset"></select>
+          </label>
+          <label>
+            <span>Base URL（留空用预设默认）</span>
+            <input type="text" data-path="api.baseURL" placeholder="https://opencode.ai/zen" />
+          </label>
+          <label>
+            <span>模型（留空用预设默认）</span>
+            <input type="text" data-path="api.model" placeholder="jev-1.13-free" />
+          </label>
+          <label>
+            <span>路径</span>
+            <input type="text" data-path="api.path" placeholder="/v1/systemone" />
+          </label>
+          <label>
+            <span>API Key（Zen 免费档可留空）</span>
+            <input type="password" data-path="api.apiKey" autocomplete="off" placeholder="sk-..." />
+          </label>
+          <label>
+            <span>单次超时 (ms)</span>
+            <input type="number" data-path="api.timeoutMs" min="1000" max="60000" step="500" />
+          </label>
+          <label>
+            <span>重试次数</span>
+            <input type="number" data-path="api.maxRetries" min="0" max="5" step="1" />
+          </label>
+        </div>
+        <div class="row">
+          <input id="test-text" type="text" placeholder="用一段样例文案试一下模型（默认是典型的黄推话术）" />
+          <button id="test">测试连接</button>
+          <span id="test-note" class="note"></span>
+        </div>
+        <pre id="test-result" class="code" hidden></pre>
+      </section>
+
+      <section>
+        <h2>2. 置信度闸门</h2>
+        <p class="sub">
+          「色情概率」来自 Jev 的 noul 问题，「类别置信度」来自 choice 问题的概率峰值。
+          两者都过关才会执行账号动作；否则最多隐藏成「待确认」。
+          <strong>双确认</strong>是给商业色情推广留的第二条路：两个互相独立的 noul
+          （色情 + 站外引流）同时过关、且类别置信度极高时才升级为「可拉黑」。
+        </p>
+        <div class="grid">
+          <label>
+            <span>拉黑阈值：色情概率 ≥</span>
+            <input type="number" data-path="thresholds.blockNoul" min="0.5" max="1" step="0.01" />
+          </label>
+          <label>
+            <span>拉黑阈值：类别置信度 ≥</span>
+            <input type="number" data-path="thresholds.blockConfidence" min="0" max="1" step="0.01" />
+          </label>
+          <label>
+            <span>双确认：色情概率 ≥</span>
+            <input type="number" data-path="thresholds.dualAdult" min="0.5" max="1" step="0.01" />
+          </label>
+          <label>
+            <span>双确认：引流概率 ≥</span>
+            <input type="number" data-path="thresholds.dualSolicitation" min="0.5" max="1" step="0.01" />
+          </label>
+          <label>
+            <span>双确认：类别置信度 ≥</span>
+            <input type="number" data-path="thresholds.dualConfidence" min="0.5" max="1" step="0.01" />
+          </label>
+          <label>
+            <span>隐藏阈值：色情概率 ≥</span>
+            <input type="number" data-path="thresholds.hideNoul" min="0.3" max="1" step="0.01" />
+          </label>
+          <label>
+            <span>隐藏阈值：类别置信度 ≥</span>
+            <input type="number" data-path="thresholds.hideConfidence" min="0" max="1" step="0.01" />
+          </label>
+          <label>
+            <span>图片可疑：肤色占比 ≥</span>
+            <input type="number" data-path="thresholds.mediaSuspiciousRatio" min="0.1" max="1" step="0.01" />
+          </label>
+          <label>
+            <span>图片裸露：肤色占比 ≥</span>
+            <input type="number" data-path="thresholds.mediaBlockedRatio" min="0.2" max="1" step="0.01" />
+          </label>
+        </div>
+      </section>
+
+      <section>
+        <h2>2.5 预检（模型先行，召回的关键）</h2>
+        <p class="sub">
+          关键词表只是「廉价的怀疑」，不是召回上限：真实黄推会不断换写法
+          （`比我好看的没我骚🔧👏`、把引流写进<b>显示名</b>），词表里没有的写法模型根本看不到。
+          打开预检后，<b>没被词表命中的推文也会被问一句廉价单问</b>
+          （「这是不是机器人式成人诱饵/性暗示自夸」），命中才升级为完整四问。
+        </p>
+        <p class="sub">
+          命中线 0.65（只隐藏待确认）、升级线 0.75（再问完整四问，可能进入静音/拉黑档）。
+          代价：普通推文也会各花一次单问（约为四问的 1/4 成本）。用下面的采样率和预算控制总量，
+          不想花这笔钱就把开关关掉，回到「只有候选才调用」的 0 成本模式。
+        </p>
+        <div class="grid">
+          <label class="check"><input type="checkbox" data-path="triage.enabled" /><span>启用预检（推荐）</span></label>
+          <label>
+            <span>采样率（0–1，1 = 全部预检）</span>
+            <input type="number" data-path="triage.sampleRate" min="0" max="1" step="0.05" />
+          </label>
+          <label>
+            <span>预检每分钟上限</span>
+            <input type="number" data-path="triage.maxPerMinute" min="0" max="600" />
+          </label>
+          <label>
+            <span>预检每天上限</span>
+            <input type="number" data-path="triage.maxPerDay" min="0" max="100000" />
+          </label>
+          <label>
+            <span>预检命中：隐藏阈值 ≥</span>
+            <input type="number" data-path="thresholds.baitReview" min="0.3" max="1" step="0.01" />
+          </label>
+          <label>
+            <span>预检命中：升级四问阈值 ≥</span>
+            <input type="number" data-path="thresholds.baitEscalate" min="0.3" max="1" step="0.01" />
+          </label>
+        </div>
+      </section>
+
+      <section>
+        <h2>2.8 文案农场（重复刷屏）</h2>
+        <p class="sub">
+          真站形态：回复区里 4 个随机账号在同一分钟刷同一句
+          <code>应该没人比我玩的开了吧🤣💖我福不黑不信你看</code>。
+          单看任意一条连模型都只能说「不确定」（实测诱饵概率 0.54），但「同一段无实质内容的话被
+          N 个不同账号短时间内复制」本身就是农场证据。
+        </p>
+        <p class="sub">
+          命中后：同文案的推文**全部隐藏**（包括比它更早出现、当时被判放行的那两条），
+          归一到「只留中文/字母数字」，所以换 emoji、换标点、改大小写都躲不掉；
+          短于 10 个有效字符的内容不参与（避免「哈哈」这类大众短语误伤）。
+          是否顺带静音账号由上面的「连隐藏档也静音」开关决定 —— 农场本身<strong>不会</strong>自动拉黑。
+        </p>
+        <div class="grid">
+          <label class="check"><input type="checkbox" data-path="farm.enabled" /><span>启用文案农场检测</span></label>
+          <label>
+            <span>时间窗口 (ms)</span>
+            <input type="number" data-path="farm.windowMs" min="60000" max="86400000" step="60000" />
+          </label>
+          <label>
+            <span>至少几个不同账号</span>
+            <input type="number" data-path="farm.minAccounts" min="2" max="20" />
+          </label>
+          <label>
+            <span>农场动手：诱饵概率 ≥</span>
+            <input type="number" data-path="thresholds.farmBaitMin" min="0" max="1" step="0.05" />
+          </label>
+          <label>
+            <span>农场动手：色情概率 ≥</span>
+            <input type="number" data-path="thresholds.farmAdultMin" min="0" max="1" step="0.05" />
+          </label>
+        </div>
+      </section>
+
+      <section>
+        <h2>3. 命中后的动作</h2>
+        <p class="sub warn-text">
+          账号级动作不可逆：<strong>演练模式</strong>下只记录「本应静音/拉黑谁」而不点击，请在
+          <a href="#" id="open-audit">审计日志</a> 里核对几天后再关闭演练。
+        </p>
+        <div class="grid">
+          <label class="check"><input type="checkbox" data-path="action.hide" /><span>命中即隐藏（过滤本体）</span></label>
+          <label class="check"><input type="checkbox" data-path="action.autoMute" /><span>自动静音账号</span></label>
+          <label class="check"><input type="checkbox" data-path="action.autoBlock" /><span>自动拉黑账号（比静音更激进）</span></label>
+          <label class="check"><input type="checkbox" data-path="action.dryRun" /><span>演练模式（只记录，不执行）</span></label>
+          <label class="check"><input type="checkbox" data-path="action.muteOnHide" /><span>连「隐藏」档也静音（激进，含文案农场/预检命中）</span></label>
+          <label>
+            <span>动作间隔 (ms)</span>
+            <input type="number" data-path="action.actionDelayMs" min="0" max="60000" step="100" />
+          </label>
+          <label>
+            <span>每小时最多动作</span>
+            <input type="number" data-path="action.maxActionsPerHour" min="0" max="500" />
+          </label>
+          <label>
+            <span>每天最多动作</span>
+            <input type="number" data-path="action.maxActionsPerDay" min="0" max="5000" />
+          </label>
+        </div>
+      </section>
+
+      <section>
+        <h2>4. 生效范围与成本</h2>
+        <div class="grid">
+          <label class="check"><input type="checkbox" data-path="scope.timeline" /><span>时间线</span></label>
+          <label class="check"><input type="checkbox" data-path="scope.replies" /><span>回复区</span></label>
+          <label class="check"><input type="checkbox" data-path="scope.recommended" /><span>推荐流</span></label>
+          <label class="check"><input type="checkbox" data-path="scope.onlyVisible" /><span>只分析进入视口的推文</span></label>
+          <label>
+            <span>最短文案长度</span>
+            <input type="number" data-path="scope.minTextLength" min="0" max="200" />
+          </label>
+          <label>
+            <span>每分钟最多模型调用</span>
+            <input type="number" data-path="budget.maxJevPerMinute" min="0" max="600" />
+          </label>
+          <label>
+            <span>每天最多模型调用</span>
+            <input type="number" data-path="budget.maxJevPerDay" min="0" max="100000" />
+          </label>
+          <label>
+            <span>每分钟最多图片分析</span>
+            <input type="number" data-path="budget.maxMediaPerMinute" min="0" max="600" />
+          </label>
+          <label>
+            <span>判重缓存条数</span>
+            <input type="number" data-path="budget.cacheMaxEntries" min="100" max="20000" />
+          </label>
+          <label>
+            <span>缓存有效期 (ms)</span>
+            <input type="number" data-path="budget.cacheTtlMs" min="60000" max="604800000" step="60000" />
+          </label>
+        </div>
+        <div class="row">
+          <button id="clear-cache">清空判定缓存</button>
+          <span id="cache-note" class="note"></span>
+        </div>
+      </section>
+
+      <section>
+        <h2>5. 图片与可选视觉模型</h2>
+        <p class="sub">
+          Jev 只能读文本，所以图片默认走<strong>本地像素启发式</strong>（不出网、只看缩略图），
+          只作为佐证信号，永不会单独触发拉黑。若需要更准的图片判定，可另配一个支持
+          <code>image_url</code> 的 OpenAI 兼容视觉端点（图片 URL 会发送给该服务）。
+        </p>
+        <div class="grid">
+          <label class="check"><input type="checkbox" data-path="media.enabled" /><span>启用本地图片分析</span></label>
+          <label class="check"><input type="checkbox" data-path="media.onlyWhenSuspect" /><span>只对文案可疑的推文下载图片</span></label>
+          <label>
+            <span>每条推文最多分析图片数</span>
+            <input type="number" data-path="media.maxImagesPerTweet" min="0" max="4" />
+          </label>
+          <label class="check"><input type="checkbox" data-path="media.visionEnabled" /><span>启用视觉模型（可选，默认关闭）</span></label>
+          <label>
+            <span>视觉端点 Base URL</span>
+            <input type="text" data-path="media.visionBaseURL" placeholder="https://openrouter.ai/api/v1" />
+          </label>
+          <label>
+            <span>视觉模型</span>
+            <input type="text" data-path="media.visionModel" placeholder="qwen/qwen2.5-vl-72b-instruct" />
+          </label>
+          <label>
+            <span>视觉端点 Key</span>
+            <input type="password" data-path="media.visionApiKey" autocomplete="off" />
+          </label>
+        </div>
+      </section>
+
+      <section>
+        <h2>6. 白名单（误判反馈）</h2>
+        <div class="grid">
+          <label>
+            <span>永远放行的账号（每行一个，逗号也可）</span>
+            <textarea data-path="whitelist.handles" rows="4" placeholder="officialaccount&#10;myfriend"></textarea>
+          </label>
+          <label>
+            <span>命中即放行的关键词（每行一个）</span>
+            <textarea data-path="whitelist.keywords" rows="4" placeholder="学术讨论&#10;性教育"></textarea>
+          </label>
+        </div>
+      </section>
+
+      <section>
+        <h2>7. 黄推黑名单（可导入导出）</h2>
+        <div class="row">
+          <span id="blocklist-stats" class="pill"></span>
+          <button id="export">导出 JSON</button>
+          <button id="download">下载文件</button>
+          <button id="clear-list" class="danger">清空黑名单</button>
+        </div>
+        <textarea id="import" rows="5" placeholder="粘贴 JSON（本扩展导出的格式）、[&quot;@a&quot;,&quot;b&quot;]、{&quot;handles&quot;:[...]}，或每行一个账号"></textarea>
+        <div class="row">
+          <button id="import-btn" class="primary">导入并合并</button>
+          <span id="import-note" class="note"></span>
+        </div>
+        <pre id="export-out" class="code" hidden></pre>
+        <div class="table-wrap"><table id="blocklist-table"></table></div>
+      </section>
+
+      <section>
+        <h2>8. 审计与统计</h2>
+        <div class="grid">
+          <label>
+            <span>审计 webhook（可选，POST 每条判定）</span>
+            <input type="text" data-path="audit.webhookUrl" placeholder="https://example.com/jevx-audit" />
+          </label>
+          <label>
+            <span>内存保留条数</span>
+            <input type="number" data-path="audit.logLimit" min="10" max="5000" />
+          </label>
+          <label class="check"><input type="checkbox" data-path="ui.badge" /><span>在扩展图标上显示当前页过滤数</span></label>
+          <label class="check"><input type="checkbox" data-path="ui.showReason" /><span>在过滤条上显示判定原因</span></label>
+          <label class="check"><input type="checkbox" data-path="ui.debug" /><span>调试日志</span></label>
+        </div>
+        <div id="stats" class="stats"></div>
+        <pre id="audit" class="code"></pre>
+      </section>
+    </main>
+
+    <script type="module" src="options.js"></script>
+  </body>
+</html>
