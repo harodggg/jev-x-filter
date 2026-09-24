@@ -271,6 +271,8 @@ h2[role=heading]{margin:8px 12px;font-size:15px}</style>
   ${article('9200', 'normal_short', '已老实', { displayName: '普通用户' })}
   <!-- 真站样本（用户截图）：乱码账号名 + 单条黑话；靠新增强规则自己就该走完整判定并隐藏 -->
   ${article('9104', 'eomgduvbxj92qp', '只入身体😔😊不入生活', { displayName: 'eomgdu vxbjw' })}
+  <!-- 真站样本：另一个模板的引流黑话 + 干净显示名/正常感账号名；模型给它 ordinary，靠 review 下限 -->
+  ${article('9105', 'JonathanFifety', '玩归玩闹归闹🌹🍷给你看福👍我不开玩笑 X 6', { displayName: 'Jonathan Fisher' })}
   <!-- X 自己写的分区标题：它之后的推文都算「X 已标垃圾」 -->
   <h2 role="heading">可能的垃圾信息</h2>
   <!-- 真站截图里的三条：一条正文只有 3 个字；两条同句（只差 emoji）且显示名带引流词 -->
@@ -1216,6 +1218,12 @@ async function main() {
       g['9104']?.hidden === true && g['9104']?.band === 'hide',
       `band=${g['9104']?.band} hidden=${g['9104']?.hidden}`,
     );
+    check(
+      '引流黑话模板「玩归玩闹归闹…看福」→ 隐藏成待确认（模型说 ordinary 也不放行）',
+      g['9105']?.hidden === true && g['9105']?.band === 'review',
+      `band=${g['9105']?.band} hidden=${g['9105']?.hidden}`,
+    );
+    check('判定条写明是已知引流黑话模板', /引流黑话模板/.test(g['9105']?.bar ?? ''), (g['9105']?.bar ?? '').slice(0, 120));
     check('场景 G 页面无脚本异常', pageG.errors.length === 0, pageG.errors.slice(0, 2).join(' | '));
 
     const swCdpG = await swTarget();

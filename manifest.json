@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "信息过滤器 · Jev",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "用 Jev（TypeSafe System One）类型化决策过滤 X 时间线上的垃圾信息：色情/性交易引流、诈骗/博彩/荐股、广告导流、标题党、低质 AI、重复文案农场；高置信度才动作，默认演练模式。",
   "minimum_chrome_version": "120",
   "icons": {

@@ -302,3 +302,25 @@ test('实时内容证据强于 X 的分区信号：该 block 还是 block', () =
   assert.equal(d.band, BAND.block, '分区信号不能让已经够格的判定降级');
   assert.ok(!d.reasons.includes('x_spam_section'));
 });
+
+/**
+ * 已知引流黑话模板 → 本地 review 下限（模型对这些黑话常常给不出成人概率）。
+ * 和 X 的分区信号一样：只隐藏成待确认，绝不据此动账号。
+ */
+test('引流黑话模板命中 → review（隐藏待确认），且不动账号', () => {
+  const d = decide(answers({ adult: 0.03, cat: 'ordinary', conf: 0.6 }), { reviewFloor: true, prefilterScore: 3 }, settings);
+  assert.equal(d.band, BAND.review);
+  assert.ok(d.reasons.includes('solicit_template'));
+  const action = planAccountAction({ band: d.band, settings, budgetRemaining: 100, handle: 'JonathanFifety' });
+  assert.equal(action.kind, 'none');
+  assert.equal(action.execute, false);
+});
+
+test('真实内容证据强于黑话模板：该 block 还是 block', () => {
+  const d = decide(
+    answers({ adult: 0.97, sol: 0.95, cat: 'adult_solicitation', conf: 0.9, sev: 3 }),
+    { reviewFloor: true, prefilterScore: 3 },
+    settings,
+  );
+  assert.equal(d.band, BAND.block);
+});

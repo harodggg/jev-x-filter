@@ -52,6 +52,7 @@ export const REASON_LABEL = {
   low_confidence_review: '模型不确定，降级为待确认',
   profile_solicitation: '账号显示名本身就是色情引流（先隐藏待确认）',
   x_spam_section: 'X 自己把这批内容标为「可能的垃圾信息」（只隐藏成待确认）',
+  solicit_template: '命中已知的引流黑话模板（先隐藏成待确认）',
   farm_repeat: '重复文案农场：同一段文案被多个账号在短时间内复制',
   repeat_in_post: '同一条推文里重复同一句话（刷屏特征）',
   junk_probe: '预检：模型认为这是垃圾/诈骗诱饵/低质填充（先隐藏待确认）',
@@ -198,6 +199,11 @@ export function decide(a, signals = {}, settings) {
   /* ---------------- 4) 内容侧证据不足时的兜底：只到待确认 ---------------- */
   // X 自己的「可能的垃圾信息」分区：一条**结构信号**（不是内容证据），所以永远只到 review，
   // 绝不据此动账号；上面任何真实内容证据（类别/成人概率/农场/图片/预检）都会先命中并给出更强的档。
+  // 已知引流黑话模板（「只入身体…不入生活」「玩归玩闹归闹…看福」）：模型对这类黑话经常给不出成人概率，
+  // 但话术本身已经是强信号 —— 先隐藏成待确认，仍然**绝不据此动账号**。
+  if (anyEnabled && signals.reviewFloor) {
+    return set(BAND.review, ['solicit_template', ...(prefilterStrong ? ['prefilter_strong'] : [])]);
+  }
   if (anyEnabled && signals.xSpamSection) {
     return set(BAND.review, ['x_spam_section']);
   }

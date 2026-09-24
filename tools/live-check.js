@@ -364,6 +364,25 @@ const SAMPLES = [
     expect: 'expectHidden',
   },
   {
+    // 用户第三批截图（2026-09）：同一批农场账号的三条。
+    // ① 另一个模板的引流黑话 + 干净显示名 → 模型给 ordinary，靠 review 下限兜住；
+    // ② 显示名「处男无偿」+ 只入身体 → hide；③ 带前导/尾随 emoji 的变体 → hide。
+    name: '真站·玩归玩闹归闹…看福',
+    tweet: { id: 'r5', handle: 'JonathanFifety', displayName: 'Jonathan Fisher', text: '玩归玩闹归闹🌹🍷给你看福👍我不开玩笑 X 6', context: 'reply', threadId: '1900000000000000021' },
+    expect: 'expectHidden',
+  },
+  {
+    name: '真站·处男无偿 + 只入身体',
+    tweet: { id: 'r6', handle: 'heather68bf2', displayName: '.瑾锦 ❤️处男无偿❤️', text: '只入身体🌻😊不入生活', context: 'reply', threadId: '1900000000000000022' },
+    expect: 'expectHidden',
+  },
+  {
+    name: '真站·前导尾随 emoji 变体',
+    tweet: { id: 'r7', handle: 'FrankEdwar5vpy', displayName: 'Frank Edwards', text: '👆只入身体❤️👄不入生活。 4 🚶', context: 'reply', threadId: '1900000000000000023' },
+    expect: 'expectHidden',
+  },
+
+  {
     name: '真站·同城无偿约 + 同句变体',
     tweet: { id: 'r3', handle: 'jessica31kz6', displayName: '傲旋🌸同城无偿约🌸', text: '只入身体🦵💪不入生活', context: 'reply', threadId: '1900000000000000009' },
     expect: 'expectHidden',

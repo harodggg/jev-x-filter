@@ -268,3 +268,27 @@ test('普通文本里的「身体」不会被这条规则误伤', () => {
     assert.equal(r.reasons.includes('zh_body_euphemism'), false, text);
   }
 });
+
+/**
+ * 真站样本（用户截图）：`玩归玩闹归闹🌹🍷给你看福👍我不开玩笑 X 6`
+ * （末尾的 X 6 是复制粘贴残留）。「玩归玩闹归闹」单独是大众梗，所以只在和「看福/福利」这类钩子
+ * **同时出现**时命中；而且因为模型对这类黑话给不出成人概率（实测 adult 0.03 → ordinary），
+ * 规则本身带 `reviewFloor`：命中即「至少隐藏成待确认」。
+ */
+test('引流黑话模板「玩归玩闹归闹…看福」：命中 + reviewFloor', () => {
+  const r = preScreen(tweet({ handle: 'JonathanFifety', displayName: 'Jonathan Fisher', text: '玩归玩闹归闹🌹🍷给你看福👍我不开玩笑 X 6' }), settings);
+  assert.equal(r.skip, null);
+  assert.ok(r.reasons.includes('zh_meme_fuli'), r.reasons.join(','));
+  assert.equal(r.reviewFloor, true, '命中即至少隐藏成待确认');
+  assert.equal(r.candidate, true);
+
+  // 大众梗本身不命中（单独出现不能定罪）
+  assert.equal(preScreen(tweet({ text: '玩归玩闹归闹，别拿安全开玩笑' }), settings).reviewFloor, false);
+  assert.equal(preScreen(tweet({ text: '今天天气不错，玩归玩闹归闹别太当真' }), settings).reasons.includes('zh_meme_fuli'), false);
+});
+
+test('reviewFloor 在新闻语境里失效（引用话术不会被隐藏）', () => {
+  const r = preScreen(tweet({ text: '警方通报：某平台以「只入身体不入生活」等话术招嫖，已查处多个窝点' }), settings);
+  assert.equal(r.newsContext, true);
+  assert.equal(r.reviewFloor, false, '降级成 1 分时不给 review 下限');
+});

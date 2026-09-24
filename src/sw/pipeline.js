@@ -477,6 +477,7 @@ export function createPipeline(deps) {
       farmAccounts: farm.accounts,
       repeatInPost,
       strongNameHit: pre.strongNameHit,
+      reviewFloor: pre.reviewFloor === true,
       // X 自己标的「可能的垃圾信息」分区（内容脚本读标题得到）——只给隐藏成待确认的下限
       xSpamSection: pre.xSpamSection === true,
       nameReasons: pre.nameReasons,

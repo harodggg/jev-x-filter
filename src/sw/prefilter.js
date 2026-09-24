@@ -25,9 +25,23 @@ export const STRONG_RULES = [
     pattern: /约\s*[啪炮pP]|同城(?:上门|服务|约|联系|资源|外围|妹)|上门服务|空降|楼凤|外围|找小姐|包养|援交|一夜情|少妇|探花|口爆|毒龙|附近(?:约|人)/,
   },
   {
+    id: 'zh_meme_fuli',
+    label: '「玩归玩闹归闹…给你看福/福利」式引流黑话',
+    sexual: true,
+    reviewFloor: true,
+    // 真站样本（用户截图）：`玩归玩闹归闹🌹🍷给你看福👍我不开玩笑 X 6`（末尾的 X 6 是复制粘贴残留）。
+    // 「玩归玩闹归闹」本身是大众梗，**单独不能定罪**；所以只在它和「给你看福 / 看福利」这类钩子
+    // 同时出现时才命中（原句是「玩归玩闹归闹，别拿福利开玩笑」）。
+    // 加规则前该样本只有廉价预检 junk 0.55 → 放行（真站漏检）。
+    pattern: /玩归玩闹归闹[\s\S]{0,16}(?:给你看福|给你看福利|看福利|看福)|(?:给你看福|给你看福利|看福利)[\s\S]{0,16}玩归玩闹归闹/,
+  },
+  {
     id: 'zh_body_euphemism',
     label: '「只入身体…不入生活」式黑话',
     sexual: true,
+    // 命中即「至少隐藏成待确认」：模型对这类黑话经常给不出成人概率（实测 0.52–0.94 波动），
+    // 但它是这批账号的固定话术，值得先藏起来让用户自己看。
+    reviewFloor: true,
     // 真站样本（用户截图）：`只入身体🥦🌰不入生活` / `只入身体🦵💪不入生活` / `只入身体😔😊不入生活`
     // 是同一批农场账号的固定话术。本地原本对它**零信号**，单条出现时只能靠廉价预检拿到 junk 0.69
     // → 只到「待确认」、不动账号；加上强规则后单条也会走完整五问（实测成人概率 0.86–0.94）。
@@ -195,6 +209,7 @@ export function matchRules(text, { rules = STRONG_RULES, weight = 3, newsContext
         id: rule.id,
         label: rule.label,
         sexual: Boolean(rule.sexual),
+        reviewFloor: Boolean(rule.reviewFloor),
         weight: newsContext && weight >= 3 ? 1 : weight,
       });
     }
@@ -228,6 +243,7 @@ export function preScreen(tweet, settings) {
     skip: null,
     newsContext: false,
     shortWithMedia: false,
+    reviewFloor: false,
     /**
      * X 自己把这条放在「可能的垃圾信息」分区里（内容脚本读分区标题得到）。
      * 它**不参与**本地打分（不算 weak 命中，避免把分推到闸门阈值），
@@ -286,6 +302,9 @@ export function preScreen(tweet, settings) {
 
   result.nameReasons = [...new Set([...nameHits, ...nameWeak].map((h) => h.id))];
   result.strongNameHit = nameHits.some((h) => h.sexual);
+  // 「引流黑话模板」信号：只在**没有**被新闻语境降级（权重仍是 3）时才算，
+  // 这样「警方通报：某平台用『只入身体不入生活』话术招嫖」这类引用不会被隐藏。
+  result.reviewFloor = strongHits.some((h) => h.reviewFloor && h.weight >= 3);
 
   const minLen = settings?.scope?.minTextLength ?? 4;
   // 正文极短、但「显示名本身就是色情引流」的账号照样要送模型。
