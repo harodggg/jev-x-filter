@@ -36,7 +36,7 @@ import {
 } from './settings.js';
 import { mergeKnown } from './util.js';
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.3.1';
 
 /* ------------------------------- 运行时状态 ------------------------------- */
 
@@ -44,6 +44,23 @@ let settings = normalizeSettings(DEFAULT_SETTINGS);
 let blocklist = emptyBlocklist();
 let cumulative = { bands: { block: 0, hide: 0, review: 0, ignore: 0 }, actions: 0, since: 0 };
 let clientState = { client: null, error: null, configKey: '' };
+
+/**
+ * 运行态持久化：MV3 的 Service Worker 会被空闲回收，内存里的农场簇、判定缓存与
+ * 调用/动作预算都会清零。农场簇清零会让「同一段文案被多账号刷屏」这条信号失效，
+ * 预算清零则会让限速被重启绕过 —— 所以放进 storage.session（浏览器会话内有效，
+ * 随 SW 重启保留，必要时退回 storage.local）。
+ */
+const RUNTIME_KEY = 'jevx.runtime';
+const runtimeStore = (() => {
+  const area = chrome.storage.session ?? chrome.storage.local;
+  return {
+    load: async () => (await area.get(RUNTIME_KEY))?.[RUNTIME_KEY] ?? null,
+    save: async (snapshot) => {
+      await area.set({ [RUNTIME_KEY]: { ...snapshot, savedAt: Date.now() } });
+    },
+  };
+})();
 
 const auditor = createAuditor({
   webhookUrl: settings.audit.webhookUrl,
@@ -66,6 +83,7 @@ const pipeline = createPipeline({
   analyzeImage: (url) => analyzeImageUrl(url, { timeoutMs: Math.min(settings.api.timeoutMs, 8000) }),
   classifyWithVision: (url, mediaCfg) => classifyImageWithVision(url, mediaCfg),
   auditor,
+  runtime: runtimeStore,
   onActionCandidate: (decision) => {
     void rememberAccount(decision, { source: 'auto', band: decision.band });
   },
@@ -349,6 +367,7 @@ globalThis.__jevx = {
     return settings;
   },
   pipelineStats: () => pipeline.stats(),
+  recentDecisions: () => pipeline.recent(),
   auditorList: () => auditor.list(),
   storage: () => ({ settings, blocklist, cumulative }),
   source: AUDIT_SOURCE,

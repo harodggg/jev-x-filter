@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FARM_MIN_CHARS, createFarmTracker, farmKey, normalizeFarmText } from '../src/sw/farm.js';
+import {
+  FARM_MIN_CHARS,
+  createFarmTracker,
+  farmKey,
+  farmSimilarity,
+  hasRepeatedLine,
+  normalizeFarmText,
+} from '../src/sw/farm.js';
 
 test('归一化：吃掉 emoji、标点、大小写、零宽字符 —— 换装躲不掉', () => {
   const a = normalizeFarmText('应该没人比我玩的开了吧🤣💖我福不黑不信你看');
@@ -70,4 +77,84 @@ test('农场键与内容脚本里的实现必须逐字一致（防两处漂移�
   for (const sample of samples) {
     assert.equal(contentFarmKey(sample), farmKey(sample), sample);
   }
+});
+
+test('近似去重：插入垃圾字符/丢掉前缀/重复两遍都算同一段（真站样本）', () => {
+  const a = farmKey('比我好看的没我骚蝎🐾比我骚的没我好看');
+  const b = farmKey('比我好看的没我骚🐾💩比我骚的没我好看');
+  const c = farmKey('比我好看的没我骚🐾💩比我骚的没我好看\n比我好看的没我骚🐾💩比我骚的没我好看');
+  assert.ok(farmSimilarity(a, b) >= 0.8, `插入一个字符后相似度 ${farmSimilarity(a, b)}`);
+  assert.equal(b, c, '重复写两遍会折叠成一遍');
+  assert.ok(farmSimilarity(a, c) >= 0.8);
+
+  const d = farmKey('应该没人比我玩的开了吧我福不黑不信你看');
+  const e = farmKey('没人比我玩的开了吧我福不黑不信你看');
+  assert.ok(farmSimilarity(d, e) >= 0.8, `丢前缀后相似度 ${farmSimilarity(d, e)}`);
+
+  // 无关文案必须分开
+  assert.ok(farmSimilarity(a, e) < 0.3, `无关文案相似度 ${farmSimilarity(a, e)}`);
+  assert.equal(farmSimilarity(farmKey('今天天气不错我们一起去公园散步吧'), a), 0);
+});
+
+test('聚类：两个账号发近似文案（各插不同垃圾字符）即命中', () => {
+  const tracker = createFarmTracker();
+  const first = tracker.record('比我好看的没我骚蝎🐾比我骚的没我好看', 'MaribelTebhz');
+  const second = tracker.record('比我好看的没我骚🐾💩比我骚的没我好看\n比我好看的没我骚🐾💩比我骚的没我好看', 'ShanteUusakr');
+  assert.equal(first.hit, false);
+  assert.equal(second.hit, true);
+  assert.equal(second.accounts, 2);
+  assert.ok(second.similarity >= 0.8, `相似度 ${second.similarity}`);
+  assert.equal(second.samples.length, 2, '样本列表用于页面侧追溯隐藏');
+  assert.equal(tracker.size(), 1, '应聚成同一个簇');
+
+  // 无关文案不会并进这个簇
+  const other = tracker.record('今天天气不错我们一起去公园散步吧顺便看看新开的书店', 'normaluser');
+  assert.equal(other.accounts, 1);
+  assert.equal(tracker.size(), 2);
+});
+
+test('重复行检测：同一条推文里同一句写两遍', () => {
+  assert.equal(hasRepeatedLine('比我好看的没我骚🐾💩比我骚的没我好看\n比我好看的没我骚🐾💩比我骚的没我好看'), true);
+  assert.equal(hasRepeatedLine('今天天气不错。我们一起去公园散步吧。'), false);
+  assert.equal(hasRepeatedLine('好的'), false, '太短不算');
+});
+
+test('内容脚本侧的近似比较与 SW 侧一致（防两处漂移）', async () => {
+  await import('../src/content/extract.js');
+  const contentSimilar = globalThis.JevXExtract.farmSimilar;
+  assert.equal(typeof contentSimilar, 'function');
+  const samples = [
+    '比我好看的没我骚蝎比我骚的没我好看',
+    '比我好看的没我骚比我骚的没我好看',
+    '没人比我玩的开了吧我福不黑不信你看',
+    '今天天气不错我们一起去公园散步吧',
+  ];
+  for (const x of samples) {
+    for (const y of samples) {
+      assert.equal(contentSimilar(x, y), farmSimilarity(x, y), `${x.slice(0, 6)} ~ ${y.slice(0, 6)}`);
+    }
+  }
+});
+
+test('序列化 / 恢复：Service Worker 重启后农场簇仍在', () => {
+  const first = createFarmTracker();
+  first.record('没人比我玩的开了吧我福不黑不信你看', 'aaa'); // 用真实时间戳，否则恢复时会被窗口淘汰
+  const snapshot = first.serialize();
+
+  const second = createFarmTracker();
+  assert.equal(second.size(), 0);
+  const restored = second.restore(snapshot);
+  assert.equal(restored, 1, '恢复出 1 个簇');
+  const again = second.record('没人比我玩的开了吧我福不黑不信你看', 'bbb');
+  assert.equal(again.hit, true, '重启后第二个账号就能凑够农场');
+  assert.equal(again.accounts, 2);
+});
+
+test('恢复时会淘汰超过窗口的旧簇', () => {
+  const a = createFarmTracker({ windowMs: 1000 });
+  a.record('没人比我玩的开了吧我福不黑不信你看', 'aaa');
+  const snapshot = a.serialize();
+  snapshot.clusters[0].ts = Date.now() - 60_000;
+  const b = createFarmTracker({ windowMs: 1000 });
+  assert.equal(b.restore(snapshot), 0);
 });

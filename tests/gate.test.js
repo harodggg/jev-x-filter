@@ -257,11 +257,25 @@ test('文案农场：命中即隐藏（有诱饵/色情/本地信号时），但
   assert.ok(farm.reasons.includes('farm_repeat'));
   assert.notEqual(farm.band, BAND.block);
 
-  // 没有任何色情/诱饵信号 → 农场单独不动手（避免把同一句新闻标题当 spam）
-  const weak = decide(answers({}), { prefilterScore: 0, farmHit: true, farmAccounts: 4, junkProbability: 0.05 }, settings);
+  // 2 个账号、没有任何内容侧信号 → 农场单独不动手（避免「两个人恰好发同一句长句」误伤）
+  const weak = decide(answers({}), { prefilterScore: 0, farmHit: true, farmAccounts: 2, junkProbability: 0.05 }, settings);
   assert.equal(weak.band, BAND.ignore);
+  // 3 个以上账号时，结构证据本身足够（见下一个测试）
+  const many = decide(answers({}), { prefilterScore: 0, farmHit: true, farmAccounts: 4, junkProbability: 0.05 }, settings);
+  assert.equal(many.band, BAND.hide);
 
   // 本地弱特征也算信号
   const withWeak = decide(answers({}), { prefilterScore: 1, farmHit: true, farmAccounts: 3, junkProbability: 0.05 }, settings);
   assert.equal(withWeak.band, BAND.hide);
+});
+
+test('农场结构证据：≥3 个账号时不再要求内容侧信号', () => {
+  // 模型对单条文案只给 0.44（低于预检隐藏线），也没有本地命中 → 靠账号数兜住
+  const three = decide(answers({}), { prefilterScore: 0, farmHit: true, farmAccounts: 3, junkProbability: 0.44 }, settings);
+  assert.equal(three.band, BAND.hide);
+  assert.ok(three.reasons.includes('farm_repeat'));
+
+  // 只有 2 个账号且没有内容侧信号 → 不动手（避免「两个人恰好发同一句长句」误伤）
+  const two = decide(answers({}), { prefilterScore: 0, farmHit: true, farmAccounts: 2, junkProbability: 0.05 }, settings);
+  assert.equal(two.band, BAND.ignore);
 });

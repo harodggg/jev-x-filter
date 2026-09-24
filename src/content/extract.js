@@ -55,11 +55,45 @@
     return normalized.length < 10 ? null : normalized;
   }
 
+  /** 字符 3-gram 集合。 */
+  function farmShingles(text, n = 3) {
+    const t = String(text ?? '');
+    const set = new Set();
+    if (t.length < n) {
+      if (t) set.add(t);
+      return set;
+    }
+    for (let i = 0; i + n <= t.length; i++) set.add(t.slice(i, i + n));
+    return set;
+  }
+
+  /**
+   * 近似文案比较（与 src/sw/farm.js 的 farmSimilarity 同一套算法：3-gram 重叠系数 + 长度比护栏）。
+   * 内容脚本是传统脚本、不能 import，所以复制一份；单测会断言两边结果一致，防止漂移。
+   */
+  function farmSimilar(a, b) {
+    const sa = String(a ?? '');
+    const sb = String(b ?? '');
+    if (!sa && !sb) return 1;
+    if (!sa || !sb) return 0;
+    if (sa === sb) return 1;
+    const ratio = Math.min(sa.length, sb.length) / Math.max(sa.length, sb.length);
+    if (ratio < 0.5) return 0;
+    const setA = farmShingles(sa);
+    const setB = farmShingles(sb);
+    const smaller = setA.size <= setB.size ? setA : setB;
+    const larger = smaller === setA ? setB : setA;
+    if (smaller.size === 0) return 0;
+    let inter = 0;
+    for (const g of smaller) if (larger.has(g)) inter += 1;
+    return inter / smaller.size;
+  }
+
   /** 稳定键：优先推文 id，其次「作者 + 文案」哈希（转推/重复渲染也能去重）。 */
   function tweetKey(tweet) {
     if (tweet?.id) return `id:${tweet.id}`;
     return `h:${hash32(`${tweet?.handle ?? ''}|${tweet?.text ?? ''}`)}`;
   }
 
-  root.JevXExtract = { parseTweet, tweetKey, farmKey, hash32 };
+  root.JevXExtract = { parseTweet, tweetKey, farmKey, farmSimilar, hash32 };
 })(globalThis);

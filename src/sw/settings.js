@@ -158,6 +158,8 @@ export const DEFAULT_SETTINGS = {
      * 「两个人恰好发了同一句长句 + 其中还有黑话」几乎只有协同账号才会发生。
      */
     minAccounts: 2,
+    /** 近似去重的相似度阈值（字符 3-gram Jaccard）：农场账号会在同一句里各插不同垃圾字符。 */
+    minSimilarity: 0.8,
   },
   /**
    * 预检（模型先行，解决「关键词表就是召回上限」）：
@@ -272,6 +274,7 @@ export function normalizeSettings(raw) {
   s.farm.enabled = Boolean(s.farm.enabled);
   s.farm.windowMs = clampInt(s.farm.windowMs, 60000, 86400000, 1800000);
   s.farm.minAccounts = clampInt(s.farm.minAccounts, 2, 20, 2);
+  s.farm.minSimilarity = clampNumber(s.farm.minSimilarity, 0.5, 1, 0.8);
 
   s.triage.enabled = Boolean(s.triage.enabled);
   s.triage.sampleRate = clampNumber(s.triage.sampleRate, 0, 1, 1);

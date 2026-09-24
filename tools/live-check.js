@@ -94,6 +94,7 @@ const pipeline = createPipeline({
  *   expectHidden —— 垃圾信息形态：至少要被隐藏（质量期望，未达只告警）
  *   expectBlock  —— 期望进入 block 档（可动账号；未达只告警）
  *   expectHideOnly —— 期望隐藏但**绝不**进入 block 档（误进 block 记硬失败）
+ *   knownGap    —— 已知残差：只记录、不计入成败（例如单条孤立样本模型自己判「普通」）
  */
 const SAMPLES = [
   {
@@ -217,6 +218,31 @@ const SAMPLES = [
     expect: 'expectHidden',
   },
   {
+    name: '农场变体#1（插「蝎」）',
+    tweet: { id: 's23', handle: 'MaribelTebhz', displayName: 'Maribel Tebow', text: '比我好看的没我骚蝎🐾比我骚的没我好看', media: [], context: 'reply' },
+    expect: 'expectHidden',
+  },
+  {
+    name: '农场变体#2（近似+重复两遍）',
+    tweet: {
+      id: 's24',
+      handle: 'ShanteUusakr',
+      displayName: 'Shantel Just',
+      text: '比我好看的没我骚🐾💩比我骚的没我好看\n比我好看的没我骚🐾💩比我骚的没我好看',
+      media: [],
+      context: 'reply',
+    },
+    expect: 'expectHidden',
+  },
+  {
+    name: '玩的开变体（单条孤立）',
+    tweet: { id: 's25', handle: 'ShawanaLafavor', displayName: 'Shawana Lafavor', text: '没人比我玩的开了吧🤣💩我福不黑不信你看', media: [], context: 'reply' },
+    // 已知残差：模型对这条单条文案只给 junk 0.43 / ordinary —— 只靠内容判不出来。
+    // 真实时间线里它会被「近似文案农场」兜住（同一模板的其他账号一发就成簇），
+    // 但完全孤立时仍会漏；这里只记录、不计成败，保持诚实。
+    expect: 'knownGap',
+  },
+  {
     name: '诈骗·荐股（内幕/稳赚）',
     tweet: { id: 's18', handle: 'stockguru88', text: '内幕消息：跟随老师操作，月入十万，稳赚不赔，加V领取建仓表', media: [], context: 'timeline' },
     expect: 'expectBlock',
@@ -331,15 +357,15 @@ async function main() {
       (sample.expect === 'mustNotHide' && hidden) ||
       (sample.expect === 'mustNotBlock' && decision.band === 'block') ||
       (sample.expect === 'expectHideOnly' && decision.band === 'block');
-    const missed =
-      (sample.expect === 'expectHidden' && !hidden) ||
+    const infoOnly = sample.expect === 'knownGap';
+    const missed = !infoOnly && ((sample.expect === 'expectHidden' && !hidden) ||
       (sample.expect === 'expectBlock' && decision.band !== 'block') ||
-      (sample.expect === 'expectHideOnly' && !hidden);
+      (sample.expect === 'expectHideOnly' && !hidden));
     if (violated) hardFail += 1;
     if (missed) softMiss += 1;
 
-    const mark = violated ? '  ✗ 违反安全底线' : missed ? '  ⚠ 未达期望' : '  ✓';
-    const tier = sampleCalls.map(({ request }) => (Object.keys(request.questions).length === 1 ? '预检' : '四问')).join('+') || '未调用';
+    const mark = violated ? '  ✗ 违反安全底线' : missed ? '  ⚠ 未达期望' : infoOnly ? '  · 已知残差（不计成败）' : '  ✓';
+    const tier = sampleCalls.map(({ request }) => (Object.keys(request.questions).length === 1 ? '预检' : '五问')).join('+') || '未调用';
     const would =
       decision.accountAction?.kind && decision.accountAction.kind !== 'none'
         ? `would=${decision.accountAction.kind}(${decision.accountAction.reason})`
@@ -360,7 +386,7 @@ async function main() {
   const stats = pipeline.stats();
   console.log(`\n安全底线违反：${hardFail}   期望隐藏未命中：${softMiss}`);
   console.log(
-    `调用统计：共 ${stats.jevCalls} 次（预检 ${stats.triageProbes} · 预检命中 ${stats.triageHits} · 升级四问 ${stats.triageEscalated}）` +
+    `调用统计：共 ${stats.jevCalls} 次（预检 ${stats.triageProbes} · 预检命中 ${stats.triageHits} · 升级五问 ${stats.triageEscalated}）` +
       `，token 输入 ${tokensIn} / 输出 ${tokensOut}`,
   );
   console.log(

@@ -15,7 +15,7 @@
  */
 import { buildJunkProbe, buildRequest, buildState, readAnswers, readJunkAnswer } from './classifier.js';
 import { decide as gateDecide, describeReasons, planAccountAction, BAND } from './gate.js';
-import { createFarmTracker } from './farm.js';
+import { createFarmTracker, hasRepeatedLine } from './farm.js';
 import { mediaSuspicion } from './media.js';
 import { preScreen } from './prefilter.js';
 import { RateWindow, hash32 } from './util.js';
@@ -68,9 +68,66 @@ export function createPipeline(deps) {
     now = () => Date.now(),
     random = Math.random,
     onActionCandidate = null,
+    /** 运行态持久化（Service Worker 空闲回收后恢复农场簇与调用/动作预算）。 */
+    runtime = null,
   } = deps;
 
   const cache = new Map();
+  let runtimeReady = null;
+  let saveTimer = null;
+
+  function scheduleRuntimeSave() {
+    if (!runtime?.save) return;
+    if (saveTimer) return;
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      void runtime.save(snapshotRuntime()).catch(() => {});
+    }, 500);
+  }
+
+  function snapshotRuntime() {
+    return {
+      farm: farmTracker.serialize(),
+      budget: {
+        // 只带「每天计数」与「每小时动作窗口」：它们跨重启必须保留（否则限速被绕过、
+        // 每日额度被重置）。分钟级窗口不带 —— 重启后重置它们不会放宽任何安全约束，
+        // 反而会把「上一分钟的调用」算进新会话，导致刚启动就超预算（端到端场景 D 踩到过）。
+        day,
+        actionHour: actionHour.stamps,
+      },
+    };
+  }
+
+  function restoreRuntime(data) {
+    if (!data) return;
+    try {
+      farmTracker.restore(data.farm);
+    } catch {
+      /* 数据结构变了就当没有 */
+    }
+    if (data.budget?.day && typeof data.budget.day.key === 'string') day = { ...day, ...data.budget.day };
+    for (const [window, stamps] of [[actionHour, data.budget?.actionHour]]) {
+      if (Array.isArray(stamps)) window.stamps = stamps.filter((t) => Number.isFinite(t));
+    }
+  }
+
+  function ensureRuntimeLoaded() {
+    if (!runtimeReady) {
+      runtimeReady = (async () => {
+        if (!runtime?.load) return;
+        try {
+          restoreRuntime(await runtime.load());
+        } catch {
+          /* 读不回来就按空状态跑 */
+        }
+      })();
+    }
+    return runtimeReady;
+  }
+
+  void ensureRuntimeLoaded();
+  /** 最近判定（调试/端到端诊断用；只读，不进审计）。 */
+  const recent = [];
   const farmTracker = createFarmTracker();
   let farmConfigKey = '';
   const inflight = new Map();
@@ -208,6 +265,15 @@ export function createPipeline(deps) {
         latencyMs: now() - started,
       };
       writeCache(cacheKey(tweet, settings), out, settings, now());
+      recent.push({
+        id: out.tweetId,
+        handle: out.handle,
+        band: out.band,
+        source: out.source,
+        farm: out.farm ? out.farm.accounts : 0,
+        reasons: out.reasons.slice(0, 3),
+      });
+      if (recent.length > 40) recent.splice(0, recent.length - 40);
       stats.bands[out.band] = (stats.bands[out.band] ?? 0) + 1;
       const cat = out.detail?.category ?? 'unknown';
       stats.categories[cat] = (stats.categories[cat] ?? 0) + 1;
@@ -227,15 +293,19 @@ export function createPipeline(deps) {
     }
 
     // 文案农场：同一段无实质内容的话被多个账号短时间复制（真站：回复区里 4 个账号刷同一句）
-    const farmConfig = `${settings.farm.windowMs}:${settings.farm.minAccounts}:${settings.farm.enabled}`;
+    const farmConfig = `${settings.farm.windowMs}:${settings.farm.minAccounts}:${settings.farm.minSimilarity}:${settings.farm.enabled}`;
     if (farmConfig !== farmConfigKey) {
       farmTracker.configure?.(settings.farm);
       farmConfigKey = farmConfig;
     }
     const farm = settings.farm.enabled && settings.categories.farm?.enabled !== false
       ? farmTracker.record(tweet?.text, tweet?.handle)
-      : { hit: false, key: null, accounts: 0 };
+      : { hit: false, key: null, accounts: 0, samples: [] };
+    // 同一条推文里重复同一句话（Shantel Just 那种「同一句写两遍」）也是刷屏特征
+    const repeatInPost = settings.categories.farm?.enabled !== false && hasRepeatedLine(tweet?.text);
     if (farm.hit) stats.farmHits += 1;
+    scheduleRuntimeSave();
+    if (repeatInPost && !farm.hit) stats.repeatInPost = (stats.repeatInPost ?? 0) + 1;
 
     const media = await collectMediaSignals(tweet, settings, pre);
     const vision = await maybeVision(tweet, settings);
@@ -246,6 +316,7 @@ export function createPipeline(deps) {
       shortWithMedia: pre.shortWithMedia,
       farmHit: farm.hit,
       farmAccounts: farm.accounts,
+      repeatInPost,
       strongNameHit: pre.strongNameHit,
       nameReasons: pre.nameReasons,
       mediaSuspicious: media.mediaSuspicious,
@@ -305,7 +376,7 @@ export function createPipeline(deps) {
       // 代价是一句廉价的单问；命中则升级为完整四问，未达升级线但超过隐藏线则只隐藏成待确认。
       const before = budgetSnapshot(settings, now());
       // 农场命中必须让模型看一眼（它是 hide 档判定所需的诱饵信号），所以农场命中不受采样率限制。
-      if (!farm.hit && random() >= settings.triage.sampleRate) {
+      if (!farm.hit && !repeatInPost && random() >= settings.triage.sampleRate) {
         triage.skipped = 'not_sampled';
       } else if (before.triageMinuteRemaining <= 0 || before.triageDayRemaining <= 0 || before.jevDayRemaining <= 0) {
         triage.skipped = 'triage_budget_exhausted';
@@ -374,6 +445,7 @@ export function createPipeline(deps) {
     if (action.kind !== 'none' && action.execute) {
       actionHour.tryTake(now(), settings.action.maxActionsPerHour);
       day.actions += 1;
+      scheduleRuntimeSave();
     }
 
     const reasons = [...gated.reasons];
@@ -392,9 +464,11 @@ export function createPipeline(deps) {
         degraded,
         triage,
         junkProbability,
-        farm: { hit: farm.hit, accounts: farm.accounts, key: farm.key },
+        farm: { hit: farm.hit, accounts: farm.accounts, key: farm.key, similarity: farm.similarity, repeatInPost },
       },
-      farm: farm.hit ? { hit: true, key: farm.key, accounts: farm.accounts } : null,
+      farm: farm.hit
+        ? { hit: true, key: farm.key, accounts: farm.accounts, similarity: farm.similarity, samples: farm.samples }
+        : null,
       accountAction: action,
       prefilter: {
         score: pre.score,
@@ -445,6 +519,7 @@ export function createPipeline(deps) {
   return {
     /** 同一条推文并发只判一次；结果按 id+文案+阈值指纹缓存。 */
     async decide(tweet) {
+      await ensureRuntimeLoaded();
       const settings = getSettings();
       const key = cacheKey(tweet, settings);
       const nowMs = now();
@@ -464,6 +539,12 @@ export function createPipeline(deps) {
     clearCache() {
       cache.clear();
     },
+    /** 最近 40 条判定（诊断用）。 */
+    recent() {
+      return recent.slice();
+    },
+    /** 运行态快照（持久化/诊断用）。 */
+    snapshotRuntime,
     budget() {
       return budgetSnapshot(getSettings(), now());
     },

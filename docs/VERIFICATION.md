@@ -4,9 +4,9 @@
 
 ```bash
 npm run check     # 21 项静态自检（37 个 JS 文件语法检查）
-npm test          # 136 个单测
-npm run verify    # 真实 Chrome 端到端：75 项断言
-npm run package   # 打包 dist/jev-x-filter-0.3.0.zip
+npm test          # 143 个单测
+npm run verify    # 真实 Chrome 端到端：76 项断言
+npm run package   # 打包 dist/jev-x-filter-0.3.1.zip
 npm run all       # 顺序执行以上三步
 
 # 真实模型验证（Key 只从环境变量读，不写进任何文件）

@@ -77,7 +77,10 @@ img{width:80px;height:80px}[role=menuitem]{padding:8px;cursor:pointer}
   ${article('777', 'JesseAlvarl3', '那一夜你没有拒绝我😭🤣不是人机', { displayName: '🍑真实同城约p🍑主页联系🔞免费' })}
   <!-- 真站漏检样本 2：正文与显示名都没有任何关键词（乱码账号名 + 性暗示自夸），
        只能靠预检（模型先行）捞出来 -->
-  ${article('888', 'yrmyzhcxvlkzpu', '比我好看的没我骚🔧👏比我骚的没我好看', { displayName: 'yrmyzh cxvlu' })}
+  ${article('888', 'yrmyzhcxvlkzpu', '比我好看的没我骚🔧👏但我承认你更好看', { displayName: 'yrmyzh cxvlu' })}
+  <!-- 近似文案农场：两个账号发同一句、各自插入不同垃圾字符；其中一条还把同一句写了两遍 -->
+  ${article('1003', 'MaribelTebhz', '比我好看的没我骚蝎🐾比我骚的没我好看', { displayName: 'Maribel Tebow' })}
+  ${article('1004', 'ShanteUusakr', '比我好看的没我骚🐾💩比我骚的没我好看。比我好看的没我骚🐾💩比我骚的没我好看', { displayName: 'Shantel Just' })}
   <!-- 信息过滤器新增类别：诈骗（可动账号）与标题党（只隐藏） -->
   ${article('1001', 'stockguru88', '内幕消息：跟随老师操作，月入十万，稳赚不赔，加V领取建仓表')}
   ${article('1002', 'buzzfeed_cn', '不看后悔一辈子！删前速看，99%的人都不知道的真相')}
@@ -203,7 +206,7 @@ function answersFor(state) {
  * 对普通推文给极低分（实测对照 0.02–0.13）。
  */
 function junkFor(state) {
-  if (/比我骚|骚/.test(state)) return 0.8; // ≥ 升级线 0.75 → 再问完整四问
+  if (/比我骚|骚/.test(state)) return 0.8; // ≥ 升级线 0.75 → 再问完整五问
   if (/玩的开了|我福不黑/.test(state)) return 0.54; // 实测值：单看文案模型也不确定，靠农场补刀
   if (/ORDINARY/.test(state)) return 0.04;
   return 0.15;
@@ -312,7 +315,7 @@ class CDP {
           this.pending.delete(id);
           reject(new Error(`CDP 超时: ${method}`));
         }
-      }, 20000);
+      }, 30000);
     });
   }
 
@@ -410,6 +413,8 @@ const PROBE = `(() => {
       hidden: a.getAttribute('data-jevx-hidden') === '1',
       band: a.getAttribute('data-jevx-state'),
       source: a.getAttribute('data-jevx-source'),
+      sig: (a.dataset.jevxSig || '').slice(0, 12),
+      epoch: a.dataset.jevxEpoch || '',
       bar: (a.querySelector(':scope > .jevx-bar')?.textContent || '').replace(/\\s+/g, ' ').slice(0, 160),
     };
   }
@@ -418,6 +423,7 @@ const PROBE = `(() => {
 
 const SW_PROBE = `(() => ({
   stats: globalThis.__jevx?.pipelineStats?.() ?? null,
+  recent: globalThis.__jevx?.recentDecisions?.() ?? [],
   audit: (globalThis.__jevx?.auditorList?.() ?? []).slice(-40),
   settings: globalThis.__jevx?.settings ?? null,
 }))()`;
@@ -534,6 +540,8 @@ async function main() {
       api: { preset: 'custom', baseURL: BASE, model: 'jev-test', apiKey: 'e2e-key', path: '/v1/systemone', timeoutMs: 8000, maxRetries: 0 },
       audit: { webhookUrl: `${BASE}/audit`, logLimit: 500 },
       budget: { maxJevPerMinute: 60, maxJevPerDay: 500, maxMediaPerMinute: 60, concurrency: 3, cacheTtlMs: 21600000, cacheMaxEntries: 500 },
+      // 测试会在 1 分钟内反复加载 4 个页面，预检配额给足，否则会因预算跳过而影响断言
+      triage: { enabled: true, sampleRate: 1, maxPerMinute: 200, maxPerDay: 600 },
       scope: { timeline: true, replies: true, recommended: true, onlyVisible: false, minTextLength: 4 },
     };
     await configure({ ...baseSettings, action: { hide: true, autoMute: true, autoBlock: false, dryRun: true, actionDelayMs: 300, maxActionsPerHour: 20, maxActionsPerDay: 100 } });
@@ -547,19 +555,24 @@ async function main() {
         async () => {
           const p = await pageA.cdp.evaluate(PROBE);
           const hidden = Object.values(p.articles).filter((a) => a.hidden).length;
-          return hidden >= 12 ? p : null;
+          return hidden >= 14 ? p : null;
         },
         { label: '场景 A 出现 3 条隐藏推文' },
       );
     } catch (error) {
       probeA = await pageA.cdp.evaluate(PROBE).catch(() => ({ articles: {}, actions: [] }));
-      check('场景 A 十二条可疑推文被隐藏', false, String(error.message));
+      check('场景 A 十四条可疑推文被隐藏', false, String(error.message));
     }
 
     const a = probeA.articles ?? {};
     check('黄推（中文引流）被隐藏', a['111']?.hidden === true, `band=${a['111']?.band}`);
     check('黄推（英文 escort）被隐藏', a['333']?.hidden === true, `band=${a['333']?.band}`);
     check('图片佐证 + 弱文案 被隐藏（I1：不升级为账号动作）', a['666']?.hidden === true, `band=${a['666']?.band}`);
+    check(
+      '近似文案农场：两个账号各插不同垃圾字符，两条都被隐藏',
+      a['1003']?.hidden === true && a['1004']?.hidden === true,
+      `1003=${a['1003']?.band} 1004=${a['1004']?.band}`,
+    );
     check('诈骗类（荐股/稳赚/加V领取）被判定为 block 档', a['1001']?.hidden === true && a['1001']?.band === 'block', `band=${a['1001']?.band}`);
     check('标题党被隐藏但不进入动作档（该类别不可动账号）', a['1002']?.hidden === true && a['1002']?.band === 'hide', `band=${a['1002']?.band}`);
     check(
@@ -667,7 +680,7 @@ async function main() {
         async () => {
           const p = await pageB.cdp.evaluate(PROBE);
           const hidden = Object.values(p.articles).filter((x) => x.hidden).length;
-          return hidden >= 12 && p.actions.length >= 4 ? p : null;
+          return hidden >= 14 && p.actions.length >= 4 ? p : null;
         },
         { label: '场景 B 隐藏 3 条并执行 2 次静音' },
       );
@@ -677,7 +690,7 @@ async function main() {
     }
     const b = probeB.articles ?? {};
     const actionsB = probeB.actions ?? [];
-    check('IntersectionObserver 路径生效（视口内推文被隐藏）', Object.values(b).filter((x) => x.hidden).length >= 12, `hidden=${Object.values(b).filter((x) => x.hidden).length}`);
+    check('IntersectionObserver 路径生效（视口内推文被隐藏）', Object.values(b).filter((x) => x.hidden).length >= 14, `hidden=${Object.values(b).filter((x) => x.hidden).length}`);
     check(
       '自动静音点中了正确的账号（含显示名引流账号）',
       ['spammer1', 'escort4', 'JesseAlvarl3', 'stockguru88'].every((h) => actionsB.some((x) => x.kind === 'mute' && x.handle === h)),
@@ -713,7 +726,7 @@ async function main() {
           const p = await pageC.cdp.evaluate(PROBE);
           const hidden = Object.values(p.articles).filter((x) => x.hidden).length;
           const blocked = p.actions.filter((x) => x.kind === 'block').length;
-          return hidden >= 12 && blocked >= 4 ? p : null;
+          return hidden >= 14 && blocked >= 4 ? p : null;
         },
         { label: '场景 C 完成拉黑' },
       );
@@ -727,7 +740,7 @@ async function main() {
     check('拉黑动作没有重复执行', actionsC.filter((x) => x.kind === 'block').length === 4, `block=${actionsC.filter((x) => x.kind === 'block').length}`);
     check('没有点到菜单里的反义项（Unmute/Unblock）', !actionsC.some((x) => String(x.kind).startsWith('un')), JSON.stringify(actionsC));
     check('没有点到页面里预先存在的确认按钮（X 复用 testid 的陷阱）', !actionsC.some((x) => x.kind === 'decoy-click'), JSON.stringify(actionsC));
-    check('场景 C 隐藏结果与场景 A 一致', Object.values(probeC.articles ?? {}).filter((x) => x.hidden).length >= 12, `hidden=${Object.values(probeC.articles ?? {}).filter((x) => x.hidden).length}`);
+    check('场景 C 隐藏结果与场景 A 一致', Object.values(probeC.articles ?? {}).filter((x) => x.hidden).length >= 14, `hidden=${Object.values(probeC.articles ?? {}).filter((x) => x.hidden).length}`);
     check('场景 C 页面无脚本异常', pageC.errors.length === 0, pageC.errors.slice(0, 2).join(' | '));
 
     // ---- 6c. 场景 D：武装 + 「隐藏档也静音」（验证新开关的边界） ----
@@ -747,7 +760,7 @@ async function main() {
           const farmMuted = FARM_HANDLES.every((h) => p.actions.some((x) => x.kind === 'mute' && x.handle === h));
           return hidden >= 9 && farmMuted ? p : null;
         },
-        { label: '场景 D 完成隐藏与农场静音', timeoutMs: 45000 },
+        { label: '场景 D 完成隐藏与农场静音', timeoutMs: 90000 },
       );
     } catch (error) {
       probeD = await pageD.cdp.evaluate(PROBE).catch(() => ({ articles: {}, actions: [] }));

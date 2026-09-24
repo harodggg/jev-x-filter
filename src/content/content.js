@@ -12,7 +12,7 @@
 
   const S = globalThis.JevXSelectors;
   const X = globalThis.JevXExtract;
-  const VERSION = '0.3.0';
+  const VERSION = '0.3.1';
 
   const state = {
     settings: null,
@@ -43,6 +43,8 @@
    * （它们当时的判定是 ignore，缓存里不会自己变）。这一步只改展示，不做任何账号动作。
    */
   const farmIndex = new Map();
+  /** 近似判定的相似度阈值（与 SW 侧 settings.farm.minSimilarity 默认值一致）。 */
+  const FARM_SIMILARITY = 0.8;
   /**
    * 菜单自动化必须串行：菜单是「整个页面共用」的浮层，
    * 两条推文同时点开会互相抢菜单（第二条会点到第一条的菜单项）。
@@ -218,23 +220,30 @@
     return key;
   }
 
-  /** 农场命中：把同文案的其它推文也隐藏（纯展示层，不产生账号动作）。 */
-  function retroHideFarm(key, decision, exclude) {
-    if (!key) return 0;
-    const others = (farmIndex.get(key) ?? []).filter((node) => node !== exclude && node.isConnected);
+  /**
+   * 农场命中：把**近似同文案**的其它推文也隐藏（纯展示层，不产生账号动作）。
+   * 用近似比较而不是精确相等 —— 农场账号会在同一句里各插不同垃圾字符。
+   */
+  function retroHideFarm(samples, decision, exclude) {
+    const list = Array.isArray(samples) ? samples.filter(Boolean) : [];
+    if (list.length === 0) return 0;
     let count = 0;
-    for (const node of others) {
-      if (node.dataset.jevxHidden === '1') continue;
-      const tweet = X.parseTweet(node);
-      hideArticle(node, tweet, {
-        ...decision,
-        band: 'hide',
-        reasons: ['farm_repeat'],
-        reasonLabels: ['文案农场：同一段文案被多个账号在短时间内复制刷屏'],
-        source: 'farm',
-        accountAction: { kind: 'none', execute: false, dryRun: true, reason: 'farm_retro' },
-      });
-      count += 1;
+    for (const [key, articles] of farmIndex) {
+      if (!list.some((sample) => X.farmSimilar(key, sample) >= FARM_SIMILARITY)) continue;
+      for (const node of articles) {
+        if (node === exclude || !node.isConnected) continue;
+        if (node.dataset.jevxHidden === '1') continue;
+        const tweet = X.parseTweet(node);
+        hideArticle(node, tweet, {
+          ...decision,
+          band: 'hide',
+          reasons: ['farm_repeat'],
+          reasonLabels: ['文案农场：同一段文案被多个账号在短时间内复制刷屏'],
+          source: 'farm',
+          accountAction: { kind: 'none', execute: false, dryRun: true, reason: 'farm_retro' },
+        });
+        count += 1;
+      }
     }
     return count;
   }
@@ -442,7 +451,7 @@
     const farmKey = indexFarm(article, tweet);
     applyDecision(article, tweet, decision);
     if (decision.farm?.hit) {
-      const extra = retroHideFarm(farmKey ?? decision.farm.key, decision, article);
+      const extra = retroHideFarm(decision.farm.samples ?? [farmKey ?? decision.farm.key], decision, article);
       if (extra > 0) {
         state.farmRetroHidden = (state.farmRetroHidden ?? 0) + extra;
         audit('farm_retro_hidden', tweet, { farm: decision.farm, extra });

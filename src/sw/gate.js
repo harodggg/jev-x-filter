@@ -52,6 +52,7 @@ export const REASON_LABEL = {
   low_confidence_review: '模型不确定，降级为待确认',
   profile_solicitation: '账号显示名本身就是色情引流（先隐藏待确认）',
   farm_repeat: '重复文案农场：同一段文案被多个账号在短时间内复制',
+  repeat_in_post: '同一条推文里重复同一句话（刷屏特征）',
   junk_probe: '预检：模型认为这是垃圾/诈骗诱饵/低质填充（先隐藏待确认）',
   too_short_with_media: '纯图片/纯链接推文',
   budget_exhausted: '已达调用预算',
@@ -148,6 +149,11 @@ export function decide(a, signals = {}, settings) {
   /* ---------------- 2) 结构信号：永不触发账号动作 ---------------- */
   // 重复文案农场：同一段无实质内容的话被多个账号短时间复制。
   // 仍要求至少一条内容侧信号，避免把「同一句新闻标题」误伤成 spam。
+  // 3 个以上不同账号发同一段（近似）无实质内容的话，本身就是足够强的结构证据，
+  // 不再要求额外的内容侧信号 —— 真站样本里模型对单条只给 0.44，靠这一条兜住。
+  if (farmEnabled && signals.farmHit && (signals.farmAccounts ?? 0) >= 3) {
+    return set(BAND.hide, ['farm_repeat', ...(score >= 1 ? ['prefilter_weak'] : [])]);
+  }
   if (
     farmEnabled &&
     signals.farmHit &&
