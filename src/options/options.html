@@ -2,15 +2,15 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <title>黄推过滤器 · Jev 设置</title>
+    <title>信息过滤器 · Jev 设置</title>
     <link rel="stylesheet" href="options.css" />
   </head>
   <body>
     <header>
-      <h1>黄推过滤器 · Jev</h1>
+      <h1>信息过滤器 · Jev</h1>
       <p class="sub">
-        判定引擎：<strong>Jev（TypeSafe System One）</strong> 类型化决策 —— 只问「是不是色情/是否引流」并拿到概率与置信度，
-        高置信度才动作。所有网络请求都发生在扩展后台，密钥不下发到页面。
+        判定引擎：<strong>Jev（TypeSafe System One）</strong> 类型化决策 —— 问「属于哪一类垃圾信息」并拿到
+        类别、置信度与危害程度，高置信度才动作。所有网络请求都发生在扩展后台，密钥不下发到页面。
       </p>
       <div class="row">
         <span id="api-status" class="pill">读取中…</span>
@@ -63,12 +63,29 @@
       </section>
 
       <section>
+        <h2>1.5 过滤类别</h2>
+        <p class="sub">
+          关掉某一类 = 该类别**不隐藏、不动作**（宁可漏杀不可误杀）。类别由模型判定，
+          本地预筛只负责决定「值不值得花一次调用」。
+        </p>
+        <div class="grid">
+          <label class="check"><input type="checkbox" data-path="categories.adult.enabled" /><span>色情 / 性交易引流<span class="note">（含擦边诱饵贴；可动账号）</span></span></label>
+          <label class="check"><input type="checkbox" data-path="categories.scam.enabled" /><span>诈骗 / 博彩 / 荐股<span class="note">（承诺收益、杀猪盘、赌博；可动账号）</span></span></label>
+          <label class="check"><input type="checkbox" data-path="categories.ad_spam.enabled" /><span>广告 / 导流 / 带货<span class="note">（点主页、加微信、招商代理；可动账号）</span></span></label>
+          <label class="check"><input type="checkbox" data-path="categories.clickbait.enabled" /><span>标题党 / 情绪煽动<span class="note">（只隐藏，不动账号）</span></span></label>
+          <label class="check"><input type="checkbox" data-path="categories.low_quality.enabled" /><span>低质 AI / 洗稿 / 无信息量<span class="note">（只隐藏，不动账号）</span></span></label>
+          <label class="check"><input type="checkbox" data-path="categories.farm.enabled" /><span>刷屏 / 重复文案 / 机器人农场<span class="note">（结构信号，不做模型判定）</span></span></label>
+        </div>
+      </section>
+
+      <section>
         <h2>2. 置信度闸门</h2>
         <p class="sub">
-          「色情概率」来自 Jev 的 noul 问题，「类别置信度」来自 choice 问题的概率峰值。
-          两者都过关才会执行账号动作；否则最多隐藏成「待确认」。
-          <strong>双确认</strong>是给商业色情推广留的第二条路：两个互相独立的 noul
-          （色情 + 站外引流）同时过关、且类别置信度极高时才升级为「可拉黑」。
+          账号动作需要同时满足四条：<strong>类别本身允许动账号</strong>（色情/诈骗/广告导流）、
+          <strong>类别置信度达标</strong>、<strong>危害程度达标</strong>、以及
+          <strong>至少一条硬度证据</strong>（色情概率 / 欺骗概率 / 强引流）。
+          其余情况最多隐藏成「待确认」。<strong>双确认</strong>是给商业推广留的补充路径：
+          色情与站外引流两条独立判定同时过关、且类别置信度极高时也允许进入动作档。
         </p>
         <div class="grid">
           <label>
@@ -100,6 +117,22 @@
             <input type="number" data-path="thresholds.hideConfidence" min="0" max="1" step="0.01" />
           </label>
           <label>
+            <span>隐藏阈值：危害程度 ≥</span>
+            <input type="number" data-path="thresholds.hideSeverity" min="1" max="4" step="0.5" />
+          </label>
+          <label>
+            <span>待确认阈值：类别置信度 ≥</span>
+            <input type="number" data-path="thresholds.reviewConfidence" min="0.1" max="1" step="0.05" />
+          </label>
+          <label>
+            <span>拉黑阈值：危害程度 ≥</span>
+            <input type="number" data-path="thresholds.blockSeverity" min="1" max="4" step="0.5" />
+          </label>
+          <label>
+            <span>拉黑阈值：欺骗概率 ≥</span>
+            <input type="number" data-path="thresholds.blockDeceptive" min="0.5" max="1" step="0.01" />
+          </label>
+          <label>
             <span>图片可疑：肤色占比 ≥</span>
             <input type="number" data-path="thresholds.mediaSuspiciousRatio" min="0.1" max="1" step="0.01" />
           </label>
@@ -113,10 +146,10 @@
       <section>
         <h2>2.5 预检（模型先行，召回的关键）</h2>
         <p class="sub">
-          关键词表只是「廉价的怀疑」，不是召回上限：真实黄推会不断换写法
-          （`比我好看的没我骚🔧👏`、把引流写进<b>显示名</b>），词表里没有的写法模型根本看不到。
-          打开预检后，<b>没被词表命中的推文也会被问一句廉价单问</b>
-          （「这是不是机器人式成人诱饵/性暗示自夸」），命中才升级为完整四问。
+          关键词表只是「廉价的怀疑」，不是召回上限：垃圾信息会不断换写法
+          （`比我好看的没我骚🔧👏`、emoji 拆字 `处🐕男`、把引流写进<b>显示名</b>），
+          词表里没有的写法模型根本看不到。打开预检后，<b>没被词表命中的推文也会被问一句廉价单问</b>
+          （「这是不是垃圾/诈骗诱饵/低质填充」），命中才升级为完整五问。
         </p>
         <p class="sub">
           命中线 0.65（只隐藏待确认）、升级线 0.75（再问完整四问，可能进入静音/拉黑档）。
@@ -139,11 +172,11 @@
           </label>
           <label>
             <span>预检命中：隐藏阈值 ≥</span>
-            <input type="number" data-path="thresholds.baitReview" min="0.3" max="1" step="0.01" />
+            <input type="number" data-path="thresholds.junkReview" min="0.3" max="1" step="0.01" />
           </label>
           <label>
-            <span>预检命中：升级四问阈值 ≥</span>
-            <input type="number" data-path="thresholds.baitEscalate" min="0.3" max="1" step="0.01" />
+            <span>预检命中：升级五问阈值 ≥</span>
+            <input type="number" data-path="thresholds.junkEscalate" min="0.3" max="1" step="0.01" />
           </label>
         </div>
       </section>

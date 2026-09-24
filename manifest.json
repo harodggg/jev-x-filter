@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "黄推过滤器 · Jev",
-  "version": "0.2.1",
-  "description": "用 Jev（TypeSafe System One 类型化决策）在本地判定 x.com 时间线/回复/推荐流中的色情推广，高置信度自动静音/拉黑，支持黑名单导入导出。",
+  "name": "信息过滤器 · Jev",
+  "version": "0.3.0",
+  "description": "用 Jev（TypeSafe System One）类型化决策过滤 X 时间线上的垃圾信息：色情/性交易引流、诈骗/博彩/荐股、广告导流、标题党、低质 AI、重复文案农场；高置信度才动作，默认演练模式。",
   "minimum_chrome_version": "120",
   "icons": {
     "16": "icons/icon16.png",
@@ -47,7 +47,7 @@
     }
   ],
   "action": {
-    "default_title": "黄推过滤器 · Jev",
+    "default_title": "信息过滤器 · Jev",
     "default_popup": "src/popup/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",

@@ -56,7 +56,9 @@ test('buildQuestions 通过官方校验，且只使用三种类型', () => {
   assert.equal(questions[QID.solicitation].type, 'noul');
   assert.equal(questions[QID.category].type, 'choice');
   assert.equal(questions[QID.severity].type, 'score');
-  assert.equal(Object.keys(questions[QID.category].criteria).length, 5);
+  assert.equal(questions[QID.deceptive].type, 'noul', 'v0.3 起多了一条「是否欺骗/诱导」的证据');
+  assert.equal(Object.keys(questions[QID.category].criteria).length, 9, '九个类别（含普通与都无法归类）');
+  assert.ok(questions[QID.category].criteria.scam, '必须有诈骗类');
   assert.equal(questions[QID.category].criteria.other, null, '必须给“都不像”留出口');
   assert.equal(questions[QID.severity].criteria.length, 4, 'score 级别必须 2–10');
   for (const q of Object.values(questions)) {
@@ -92,6 +94,7 @@ test('readAnswers 把缺字段/异常值一律当作不确定', () => {
   assert.deepEqual(readAnswers(undefined), {
     adult: 0,
     solicitation: 0,
+    deceptive: 0,
     category: 'other',
     categoryProbabilities: null,
     categoryConfidence: 0,
@@ -100,7 +103,7 @@ test('readAnswers 把缺字段/异常值一律当作不确定', () => {
   });
   const odd = readAnswers({ adult: { noul: 5 }, category: { choice: 'nope', confidence: -1 }, severity: { score: 'x' } });
   assert.equal(odd.adult, 1, '超出 0..1 被夹紧');
-  assert.equal(odd.category, 'nope');
+  assert.equal(odd.category, 'other', '未知类别一律收敛到 other（安全侧：不隐藏）');
   assert.equal(odd.categoryConfidence, 0);
   assert.equal(odd.severity, 0);
 });
@@ -125,7 +128,7 @@ test('线上协议：POST {baseURL}{path}，body 为 {state, questions, model}',
   assert.equal(calls[0].body.model, 'jev-test');
   assert.match(calls[0].body.state, /同城约啪/);
   assert.equal(calls[0].body.questions.adult.type, 'noul');
-  assert.equal(Object.keys(calls[0].body.questions).length, 4);
+  assert.equal(Object.keys(calls[0].body.questions).length, 5);
 
   const view = readAnswers(result.answers);
   assert.equal(view.adult, 0.97);
@@ -249,28 +252,29 @@ test('Zen 预设允许无密钥构造（免费档）', () => {
   assert.equal(client.path, '/v1/systemone');
 });
 
-test('预检问题：单问合法、只含 bait、答案读取健壮', async () => {
-  const { buildBaitProbe, readBaitAnswer, BAIT_INSTRUCTIONS } = await import('../src/sw/classifier.js');
-  const probe = buildBaitProbe();
+test('预检问题：单问合法、只含 junk、答案读取健壮', async () => {
+  const { buildJunkProbe, readJunkAnswer, JUNK_INSTRUCTIONS } = await import('../src/sw/classifier.js');
+  const probe = buildJunkProbe();
   validateQuestions(probe);
-  assert.deepEqual(Object.keys(probe), ['bait']);
-  assert.equal(probe.bait.type, 'noul');
-  assert.equal(probe.bait.instructions, BAIT_INSTRUCTIONS);
-  assert.match(BAIT_INSTRUCTIONS, /bot-driven adult-content bait/);
-  assert.ok(BAIT_INSTRUCTIONS.length > 100, '完整问题必须写在 instructions 里');
+  assert.deepEqual(Object.keys(probe), ['junk']);
+  assert.equal(probe.junk.type, 'noul');
+  assert.equal(probe.junk.instructions, JUNK_INSTRUCTIONS);
+  assert.match(JUNK_INSTRUCTIONS, /timeline junk/);
+  assert.match(JUNK_INSTRUCTIONS, /scam or fraud bait/);
+  assert.ok(JUNK_INSTRUCTIONS.length > 100, '完整问题必须写在 instructions 里');
 
-  assert.equal(readBaitAnswer({ bait: { type: 'noul', noul: 0.83 } }), 0.83);
-  assert.equal(readBaitAnswer({ bait: { type: 'noul', noul: 5 } }), 1, '夹紧到 0..1');
-  assert.equal(readBaitAnswer({ bait: {} }), null, '缺字段返回 null，绝不猜');
-  assert.equal(readBaitAnswer(undefined), null);
+  assert.equal(readJunkAnswer({ junk: { type: 'noul', noul: 0.83 } }), 0.83);
+  assert.equal(readJunkAnswer({ junk: { type: 'noul', noul: 5 } }), 1, '夹紧到 0..1');
+  assert.equal(readJunkAnswer({ junk: {} }), null, '缺字段返回 null，绝不猜');
+  assert.equal(readJunkAnswer(undefined), null);
 
   // 预检请求也能真的发出去（协议与四问一致）
   const seen = [];
   const client = makeClient(async (url, init) => {
     seen.push(JSON.parse(init.body));
-    return new Response(JSON.stringify({ model: 'jev-test', answers: { bait: { type: 'noul', noul: 0.83 } }, usage: {} }), { status: 200 });
+    return new Response(JSON.stringify({ model: 'jev-test', answers: { junk: { type: 'noul', noul: 0.83 } }, usage: {} }), { status: 200 });
   });
   const result = await client.systemOne({ state: 'POST TEXT: x', questions: probe });
-  assert.equal(seen[0].questions.bait.type, 'noul');
-  assert.equal(readBaitAnswer(result.answers), 0.83);
+  assert.equal(seen[0].questions.junk.type, 'noul');
+  assert.equal(readJunkAnswer(result.answers), 0.83);
 });

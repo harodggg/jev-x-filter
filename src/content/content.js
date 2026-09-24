@@ -12,7 +12,7 @@
 
   const S = globalThis.JevXSelectors;
   const X = globalThis.JevXExtract;
-  const VERSION = '0.2.1';
+  const VERSION = '0.3.0';
 
   const state = {
     settings: null,
@@ -110,8 +110,13 @@
 
     const tag = document.createElement('span');
     tag.className = 'jevx-tag';
+    const label = decision.categoryLabel || '';
     tag.textContent =
-      decision.band === 'block' ? '已过滤（高置信度）' : decision.band === 'review' ? '疑似黄推（待确认）' : '已过滤';
+      decision.band === 'block'
+        ? `已过滤${label ? `（${label}）` : '（高置信度）'}`
+        : decision.band === 'review'
+          ? `疑似垃圾信息${label ? `（${label}）` : ''} · 待确认`
+          : `已过滤${label ? `（${label}）` : ''}`;
     bar.appendChild(tag);
 
     const score = document.createElement('span');
@@ -119,6 +124,7 @@
     const detail = decision.detail ?? {};
     const parts = [];
     if (typeof detail.adult === 'number') parts.push(`色情概率 ${(detail.adult * 100).toFixed(0)}%`);
+    if (detail.deceptive > 0.5) parts.push(`欺骗概率 ${(detail.deceptive * 100).toFixed(0)}%`);
     if (typeof detail.categoryConfidence === 'number' && detail.categoryConfidence > 0) {
       parts.push(`类别置信度 ${(detail.categoryConfidence * 100).toFixed(0)}%`);
     }

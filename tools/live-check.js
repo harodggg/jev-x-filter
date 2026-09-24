@@ -91,7 +91,9 @@ const pipeline = createPipeline({
  * 样本期望：
  *   mustNotHide —— 明确不是黄推：既不能隐藏、更不能 block（安全底线，失败即退出码 1）
  *   mustNotBlock —— 可能擦边：可以隐藏，但绝不能 block（安全底线）
- *   expectHidden —— 黄推形态：至少要被隐藏（质量期望，未达只告警）
+ *   expectHidden —— 垃圾信息形态：至少要被隐藏（质量期望，未达只告警）
+ *   expectBlock  —— 期望进入 block 档（可动账号；未达只告警）
+ *   expectHideOnly —— 期望隐藏但**绝不**进入 block 档（误进 block 记硬失败）
  */
 const SAMPLES = [
   {
@@ -215,6 +217,31 @@ const SAMPLES = [
     expect: 'expectHidden',
   },
   {
+    name: '诈骗·荐股（内幕/稳赚）',
+    tweet: { id: 's18', handle: 'stockguru88', text: '内幕消息：跟随老师操作，月入十万，稳赚不赔，加V领取建仓表', media: [], context: 'timeline' },
+    expect: 'expectBlock',
+  },
+  {
+    name: '诈骗·博彩（首充返水）',
+    tweet: { id: 's19', handle: 'bet888win', text: '新平台首充送彩金，返水 1.5%，加群下注，日结', media: [], context: 'timeline' },
+    expect: 'expectHidden',
+  },
+  {
+    name: '标题党（删前速看）',
+    tweet: { id: 's20', handle: 'buzzfeed_cn', text: '不看后悔一辈子！删前速看，99%的人都不知道的真相', media: [], context: 'timeline' },
+    expect: 'expectHideOnly',
+  },
+  {
+    name: '低质 AI 填充',
+    tweet: { id: 's21', handle: 'aiblog_zh', text: '作为一个AI，以下是关于健康饮食的一些思考。综上所述，希望对你有帮助。', media: [], context: 'timeline' },
+    expect: 'expectHidden',
+  },
+  {
+    name: '正常商业广告（可隐藏不可拉黑）',
+    tweet: { id: 's22', handle: 'coffee_brand', text: '新品上市：手冲咖啡机限时 8 折，详情见官网', media: [], context: 'timeline' },
+    expect: 'mustNotBlock',
+  },
+  {
     name: '日常闲聊',
     tweet: { id: 's7', handle: 'normal1', text: '今天天气不错，我们一起去公园散步吧，顺便看看新开的书店。', media: [], context: 'timeline' },
     expect: 'mustNotHide',
@@ -262,7 +289,7 @@ async function main() {
   console.log(`网关：${api.preset} · ${api.baseURL}${api.path} · 模型 ${api.model}`);
   console.log('跑的是扩展真正的流水线（含模型先行预检）；账号动作停在演练档，Key 来自环境变量。\n');
   console.log(
-    `${pad('样本', 24)}${pad('档位', 8)}${pad('来源', 6)}${pad('色情', 6)}${pad('引流', 6)}${pad('诱饵', 6)}${pad('类别', 22)}${pad('置信度', 8)}${pad('延迟', 8)}说明`,
+    `${pad('样本', 26)}${pad('档位', 8)}${pad('来源', 6)}${pad('色情', 6)}${pad('引流', 6)}${pad('欺骗', 6)}${pad('junk', 6)}${pad('类别', 22)}${pad('置信度', 8)}${pad('延迟', 8)}说明`,
   );
 
   let hardFail = 0;
@@ -281,25 +308,33 @@ async function main() {
     const sampleCalls = calls.slice(before);
     let adult = null;
     let solicitation = null;
-    let bait = null;
+    let deceptive = null;
+    let junk = null;
     let category = '-';
     let confidence = null;
     for (const { request, response } of sampleCalls) {
       tokensIn += response?.usage?.input_tokens ?? 0;
       tokensOut += response?.usage?.output_tokens ?? 0;
       const ids = Object.keys(request.questions ?? {});
-      if (ids.length === 1 && ids[0] === 'bait') bait = response?.answers?.bait?.noul ?? null;
+      if (ids.length === 1 && ids[0] === 'junk') junk = response?.answers?.junk?.noul ?? null;
       else {
         adult = response?.answers?.adult?.noul ?? null;
         solicitation = response?.answers?.solicitation?.noul ?? null;
+        deceptive = response?.answers?.deceptive?.noul ?? null;
         category = response?.answers?.category?.choice ?? '-';
         confidence = response?.answers?.category?.confidence ?? null;
       }
     }
 
     const hidden = decision.band !== 'ignore';
-    const violated = (sample.expect === 'mustNotHide' && hidden) || (sample.expect === 'mustNotBlock' && decision.band === 'block');
-    const missed = sample.expect === 'expectHidden' && !hidden;
+    const violated =
+      (sample.expect === 'mustNotHide' && hidden) ||
+      (sample.expect === 'mustNotBlock' && decision.band === 'block') ||
+      (sample.expect === 'expectHideOnly' && decision.band === 'block');
+    const missed =
+      (sample.expect === 'expectHidden' && !hidden) ||
+      (sample.expect === 'expectBlock' && decision.band !== 'block') ||
+      (sample.expect === 'expectHideOnly' && !hidden);
     if (violated) hardFail += 1;
     if (missed) softMiss += 1;
 
@@ -311,7 +346,7 @@ async function main() {
         : '无动作';
     console.log(
       `${pad(sample.name, 24)}${pad(decision.band, 8)}${pad(SOURCE_LABEL[decision.source] ?? decision.source, 6)}` +
-        `${pad(fmt(adult), 6)}${pad(fmt(solicitation), 6)}${pad(fmt(bait), 6)}${pad(category, 22)}${pad(fmt(confidence), 8)}${pad(`${latency}ms`, 8)}` +
+        `${pad(fmt(adult), 6)}${pad(fmt(solicitation), 6)}${pad(fmt(junk), 6)}${pad(category, 22)}${pad(fmt(confidence), 8)}${pad(`${latency}ms`, 8)}` +
         `[${tier} → ${decision.reasons.join(',') || '无'}；${would}]${mark}`,
     );
     if (decision.farm?.hit) {

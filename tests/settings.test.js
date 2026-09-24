@@ -10,7 +10,7 @@ import { mergeKnown, hash32, RateWindow, truncate } from '../src/sw/util.js';
 
 test('默认设置本身是合法且自洽的', () => {
   const s = normalizeSettings(DEFAULT_SETTINGS);
-  assert.equal(s.schema, 1);
+  assert.equal(s.schema, 2);
   assert.equal(s.api.preset, 'typesafe');
   assert.ok(s.thresholds.hideNoul <= s.thresholds.blockNoul);
   assert.ok(s.thresholds.hideConfidence <= s.thresholds.blockConfidence);

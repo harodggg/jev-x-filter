@@ -5,11 +5,12 @@ import { DEFAULT_SETTINGS, normalizeSettings } from '../src/sw/settings.js';
 
 const settings = normalizeSettings(DEFAULT_SETTINGS);
 
-/** readAnswers() 的形状。 */
-function answers({ adult = 0, sol = 0, cat = 'ordinary', conf = 0, sev = 0 } = {}) {
+/** readAnswers() 的形状。默认危害程度 2.5（够到隐藏/动作的程度线）。 */
+function answers({ adult = 0, sol = 0, dec = 0, cat = 'ordinary', conf = 0, sev = 2.5 } = {}) {
   return {
     adult,
     solicitation: sol,
+    deceptive: dec,
     category: cat,
     categoryProbabilities: null,
     categoryConfidence: conf,
@@ -21,7 +22,8 @@ function answers({ adult = 0, sol = 0, cat = 'ordinary', conf = 0, sev = 0 } = {
 test('强类别 + 双闸门 → block', () => {
   const d = decide(answers({ adult: 0.97, cat: 'adult_porn', conf: 0.9 }), { prefilterScore: 3 }, settings);
   assert.equal(d.band, BAND.block);
-  assert.ok(d.reasons.includes('adult_porn_high_confidence'));
+  assert.ok(d.reasons.includes('category:adult_porn'));
+  assert.ok(d.reasons.includes('adult_high'));
   assert.ok(d.reasons.includes('prefilter_strong'));
 });
 
@@ -33,7 +35,8 @@ test('色情概率高但类别置信度不足 → 只隐藏，不 block', () => 
 test('引流转发：站外引流 + 成人概率高 → block', () => {
   const d = decide(answers({ adult: 0.93, sol: 0.97, cat: 'adult_solicitation', conf: 0.8 }), { prefilterScore: 3 }, settings);
   assert.equal(d.band, BAND.block);
-  assert.ok(d.reasons.includes('adult_solicitation_high_confidence'));
+  assert.ok(d.reasons.includes('category:adult_solicitation'));
+  assert.ok(d.reasons.includes('adult_high'));
 });
 
 test('类别判成普通但成人概率极高 → 隐藏', () => {
@@ -145,6 +148,49 @@ test('纯图片黄推（短文案 + 强图片信号）→ 待确认，永不动�
   assert.equal(longText.band, BAND.ignore);
 });
 
+test('诈骗类：欺骗概率 + 程度达标 → block（可动账号）', () => {
+  const scam = decide(answers({ dec: 0.92, cat: 'scam', conf: 0.88, sev: 3 }), { prefilterScore: 3 }, settings);
+  assert.equal(scam.band, BAND.block);
+  assert.ok(scam.reasons.includes('deceptive_high'));
+  assert.ok(scam.reasons.includes('category:scam'));
+});
+
+test('标题党与低质类：即使置信度极高也只隐藏，永不 block', () => {
+  for (const cat of ['clickbait', 'low_quality']) {
+    const d = decide(answers({ cat, conf: 0.99, sev: 3, dec: 0.9 }), { prefilterScore: 3 }, settings);
+    assert.equal(d.band, BAND.hide, cat);
+    assert.notEqual(d.band, BAND.block, cat);
+    assert.equal(planAccountAction({ band: d.band, settings, budgetRemaining: 10, handle: 'x' }).kind, 'none', cat);
+  }
+});
+
+test('类别被用户关掉 → 放行且写明原因（宁可漏杀不可误杀）', () => {
+  const scoped = normalizeSettings({ ...DEFAULT_SETTINGS, categories: { ...DEFAULT_SETTINGS.categories, scam: { enabled: false } } });
+  const d = decide(answers({ dec: 0.99, cat: 'scam', conf: 0.95, sev: 3.5 }), { prefilterScore: 3 }, scoped);
+  assert.equal(d.band, BAND.ignore);
+  assert.ok(d.reasons.includes('category_disabled'));
+  assert.equal(d.detail.categoryEnabled, false);
+});
+
+test('色情组关掉后，色情相关的所有隐藏路径都失效（含兜底）', () => {
+  const scoped = normalizeSettings({ ...DEFAULT_SETTINGS, categories: { ...DEFAULT_SETTINGS.categories, adult: { enabled: false } } });
+  // 模型强判定
+  assert.equal(decide(answers({ adult: 0.97, cat: 'adult_porn', conf: 0.9, sev: 3 }), { prefilterScore: 3 }, scoped).band, BAND.ignore);
+  // 兜底：成人概率 0.6 也不再进待确认
+  assert.equal(decide(answers({ adult: 0.6, cat: 'other', conf: 0.2, sev: 1 }), { prefilterScore: 0 }, scoped).band, BAND.ignore);
+  // 显示名引流与图片信号同样失效
+  assert.equal(decide(answers({}), { prefilterScore: 3, strongNameHit: true }, scoped).band, BAND.ignore);
+  assert.equal(decide(answers({}), { prefilterScore: 3, mediaBlocked: true, mediaSuspicious: true }, scoped).band, BAND.ignore);
+  // 其它类别不受影响
+  assert.equal(decide(answers({ dec: 0.95, cat: 'scam', conf: 0.9, sev: 3 }), { prefilterScore: 3 }, scoped).band, BAND.block);
+});
+
+test('危害程度不足时不会进入动作档（程度是硬门槛）', () => {
+  const low = decide(answers({ adult: 0.99, cat: 'adult_porn', conf: 0.95, sev: 1 }), { prefilterScore: 3 }, settings);
+  assert.notEqual(low.band, BAND.block);
+  assert.equal(low.band, BAND.hide, 'severe 内容判定但程度=1 → 只隐藏');
+});
+
 test('reasons 始终可解释（无重复、有标签）', () => {
   const d = decide(answers({ adult: 0.97, cat: 'adult_porn', conf: 0.9 }), { prefilterScore: 3 }, settings);
   assert.equal(new Set(d.reasons).size, d.reasons.length);
@@ -166,15 +212,15 @@ test('作者无法解析时不做账号动作', () => {
 });
 
 test('预检命中只到待确认：即使诱饵概率 1.0 也绝不 block', () => {
-  const review = decide(answers({}), { prefilterScore: 0, baitProbability: 0.8, triageProbed: true }, settings);
+  const review = decide(answers({}), { prefilterScore: 0, junkProbability: 0.8, triageProbed: true }, settings);
   assert.equal(review.band, BAND.review);
-  assert.ok(review.reasons.includes('adult_bait_probe'));
+  assert.ok(review.reasons.includes('junk_probe'));
   assert.equal(planAccountAction({ band: review.band, settings, budgetRemaining: 10, handle: 'bot' }).kind, 'none');
 
-  const max = decide(answers({}), { prefilterScore: 0, baitProbability: 1, triageProbed: true }, settings);
+  const max = decide(answers({}), { prefilterScore: 0, junkProbability: 1, triageProbed: true }, settings);
   assert.equal(max.band, BAND.review, '预检是召回手段，不是账号动作的依据（I1）');
 
-  const low = decide(answers({}), { prefilterScore: 0, baitProbability: 0.2, triageProbed: true }, settings);
+  const low = decide(answers({}), { prefilterScore: 0, junkProbability: 0.2, triageProbed: true }, settings);
   assert.equal(low.band, BAND.ignore);
 });
 
@@ -206,16 +252,16 @@ test('「隐藏档也静音」开关：默认不动作；打开后 hide 档只�
 });
 
 test('文案农场：命中即隐藏（有诱饵/色情/本地信号时），但不 block', () => {
-  const farm = decide(answers({}), { prefilterScore: 0, farmHit: true, farmAccounts: 4, baitProbability: 0.54 }, settings);
+  const farm = decide(answers({}), { prefilterScore: 0, farmHit: true, farmAccounts: 4, junkProbability: 0.54 }, settings);
   assert.equal(farm.band, BAND.hide);
   assert.ok(farm.reasons.includes('farm_repeat'));
   assert.notEqual(farm.band, BAND.block);
 
   // 没有任何色情/诱饵信号 → 农场单独不动手（避免把同一句新闻标题当 spam）
-  const weak = decide(answers({}), { prefilterScore: 0, farmHit: true, farmAccounts: 4, baitProbability: 0.05 }, settings);
+  const weak = decide(answers({}), { prefilterScore: 0, farmHit: true, farmAccounts: 4, junkProbability: 0.05 }, settings);
   assert.equal(weak.band, BAND.ignore);
 
   // 本地弱特征也算信号
-  const withWeak = decide(answers({}), { prefilterScore: 1, farmHit: true, farmAccounts: 3, baitProbability: 0.05 }, settings);
+  const withWeak = decide(answers({}), { prefilterScore: 1, farmHit: true, farmAccounts: 3, junkProbability: 0.05 }, settings);
   assert.equal(withWeak.band, BAND.hide);
 });

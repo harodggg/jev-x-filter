@@ -2,12 +2,12 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <title>黄推过滤器 · Jev</title>
+    <title>信息过滤器 · Jev</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <div class="head">
-      <strong>黄推过滤器 · Jev</strong>
+      <strong>信息过滤器 · Jev</strong>
       <span id="version" class="muted"></span>
     </div>
 
@@ -27,6 +27,9 @@
       <input type="checkbox" id="dryRun" />
       <span>演练模式（只记录，不真的点菜单）</span>
     </label>
+
+    <div class="cats-title">过滤类别（点一下立即生效）</div>
+    <div id="cats" class="cats"></div>
 
     <div id="mode" class="status">读取中…</div>
     <div id="status" class="status">读取中…</div>

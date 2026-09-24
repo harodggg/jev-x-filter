@@ -23,7 +23,18 @@ const els = {
   audit: document.getElementById('audit'),
   version: document.getElementById('version'),
   mode: document.getElementById('mode'),
+  cats: document.getElementById('cats'),
 };
+
+/** 类别开关的顺序与文案（与 src/sw/categories.js 的 CATEGORY_GROUPS 对应）。 */
+const CATEGORY_SWITCHES = [
+  ['adult', '色情/引流'],
+  ['scam', '诈骗/博彩'],
+  ['ad_spam', '广告/导流'],
+  ['clickbait', '标题党'],
+  ['low_quality', '低质AI'],
+  ['farm', '刷屏农场'],
+];
 
 async function refresh() {
   const state = await send('JEVX_GET_STATE');
@@ -56,14 +67,31 @@ async function refresh() {
   els.mode.textContent = mode;
   els.mode.className = `status ${armed ? 'ok' : ''}`;
 
+  // 类别开关
+  els.cats.textContent = '';
+  for (const [key, label] of CATEGORY_SWITCHES) {
+    const wrap = document.createElement('label');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = state.settings.categories?.[key]?.enabled !== false;
+    box.addEventListener('change', async () => {
+      await send('JEVX_SET_SETTINGS', { patch: { categories: { [key]: { enabled: box.checked } } } });
+      await refresh();
+    });
+    const span = document.createElement('span');
+    span.textContent = label;
+    wrap.append(box, span);
+    els.cats.appendChild(wrap);
+  }
+
   const s = state.stats ?? {};
   const bands = s.bands ?? {};
   const cells = [
     ['已过滤', (bands.block ?? 0) + (bands.hide ?? 0) + (bands.review ?? 0)],
     ['已放行', bands.ignore ?? 0],
     ['模型调用', s.jevCalls ?? 0],
-    ['缓存命中', s.cacheHits ?? 0],
     ['预检命中', s.triageHits ?? 0],
+    ['待动作', bands.block ?? 0],
     ['黑名单', state.blocklist?.total ?? 0],
   ];
   els.stats.textContent = '';

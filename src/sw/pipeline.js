@@ -5,16 +5,16 @@
  * 所以这一层可以在 Node 里用假客户端做完整的端到端单测，不需要浏览器、不需要联网。
  *
  * 召回策略（两级调用）：
- *   · 一级「预筛命中」/「只发图」→ 直接问完整四问；
+ *   · 一级「预筛命中」/「只发图」→ 直接问完整五问；
  *   · 二级「预检（triage）」→ 对**没有被预筛命中**的推文也问一个廉价单问
  *     （「这是不是机器人式成人诱饵/性暗示自夸」）。这是为了解决「关键词表就是召回上限」
  *     的结构性问题：真实黄推会不断换写法（`比我好看的没我骚🔧👏`、把引流写进显示名），
  *     任何白盒词表都会漏，只有让模型先看一眼才谈得上通用性。
- *   预检命中（bait 概率高）→ 升级为完整四问；未达升级线但超过隐藏线 → 只隐藏成待确认（不动作）。
+ *   预检命中（junk 概率高）→ 升级为完整五问；未达升级线但超过隐藏线 → 只隐藏成待确认（不动作）。
  *   预检的总量由 triage 预算与采样率控制；关掉 triage 就回到「只有候选才花钱」的 0 成本模式。
  */
-import { buildBaitProbe, buildRequest, buildState, readAnswers, readBaitAnswer } from './classifier.js';
-import { decide as gateDecide, planAccountAction, BAND, REASON_LABEL } from './gate.js';
+import { buildJunkProbe, buildRequest, buildState, readAnswers, readJunkAnswer } from './classifier.js';
+import { decide as gateDecide, describeReasons, planAccountAction, BAND } from './gate.js';
 import { createFarmTracker } from './farm.js';
 import { mediaSuspicion } from './media.js';
 import { preScreen } from './prefilter.js';
@@ -50,6 +50,7 @@ function emptyStats() {
     triageHits: 0,
     triageEscalated: 0,
     farmHits: 0,
+    categories: {},
     bands: { block: 0, hide: 0, review: 0, ignore: 0 },
     totalLatencyMs: 0,
     lastError: null,
@@ -199,13 +200,17 @@ export function createPipeline(deps) {
     const finish = (decision) => {
       const out = {
         ...decision,
-        reasonLabels: (decision.reasons ?? []).map((id) => REASON_LABEL[id] ?? id),
+        reasonLabels: describeReasons(decision.reasons ?? []),
+        category: decision.detail?.category ?? null,
+        categoryLabel: decision.detail?.categoryLabel ?? null,
         tweetId: tweet?.id ?? null,
         handle: tweet?.handle ?? null,
         latencyMs: now() - started,
       };
       writeCache(cacheKey(tweet, settings), out, settings, now());
       stats.bands[out.band] = (stats.bands[out.band] ?? 0) + 1;
+      const cat = out.detail?.category ?? 'unknown';
+      stats.categories[cat] = (stats.categories[cat] ?? 0) + 1;
       stats.totalLatencyMs += out.latencyMs;
       return out;
     };
@@ -227,7 +232,7 @@ export function createPipeline(deps) {
       farmTracker.configure?.(settings.farm);
       farmConfigKey = farmConfig;
     }
-    const farm = settings.farm.enabled
+    const farm = settings.farm.enabled && settings.categories.farm?.enabled !== false
       ? farmTracker.record(tweet?.text, tweet?.handle)
       : { hit: false, key: null, accounts: 0 };
     if (farm.hit) stats.farmHits += 1;
@@ -260,8 +265,8 @@ export function createPipeline(deps) {
     let answers = ZERO_ANSWERS;
     let source = 'local';
     let degraded = null;
-    let baitProbability = null;
-    const triage = { probed: false, escalated: false, skipped: null, bait: null };
+    let junkProbability = null;
+    const triage = { probed: false, escalated: false, skipped: null, junk: null };
 
     if (shouldAskModel && jev) {
       if (budget.jevMinuteRemaining <= 0 || budget.jevDayRemaining <= 0) {
@@ -312,18 +317,18 @@ export function createPipeline(deps) {
         stats.triageProbes += 1;
         triage.probed = true;
         try {
-          const probe = await jev.systemOne({ state: buildState(stateTweet), questions: buildBaitProbe() });
-          baitProbability = readBaitAnswer(probe?.answers);
-          triage.bait = baitProbability;
-          if (baitProbability === null) {
+          const probe = await jev.systemOne({ state: buildState(stateTweet), questions: buildJunkProbe() });
+          junkProbability = readJunkAnswer(probe?.answers);
+          triage.junk = junkProbability;
+          if (junkProbability === null) {
             stats.schemaInvalid += 1;
             triage.skipped = 'probe_answer_invalid';
           } else {
             source = 'triage';
-            if (baitProbability >= settings.thresholds.baitReview) stats.triageHits += 1;
+            if (junkProbability >= settings.thresholds.junkReview) stats.triageHits += 1;
             const after = budgetSnapshot(settings, now());
             if (
-              baitProbability >= settings.thresholds.baitEscalate &&
+              junkProbability >= settings.thresholds.junkEscalate &&
               after.jevMinuteRemaining > 0 &&
               after.jevDayRemaining > 0
             ) {
@@ -355,7 +360,7 @@ export function createPipeline(deps) {
 
     const gated = gateDecide(
       answers,
-      { ...signals, baitProbability, degraded, triageProbed: triage.probed },
+      { ...signals, junkProbability, degraded, triageProbed: triage.probed },
       settings,
     );
     const action = planAccountAction({
@@ -386,7 +391,7 @@ export function createPipeline(deps) {
         vision: vision ?? null,
         degraded,
         triage,
-        baitProbability,
+        junkProbability,
         farm: { hit: farm.hit, accounts: farm.accounts, key: farm.key },
       },
       farm: farm.hit ? { hit: true, key: farm.key, accounts: farm.accounts } : null,
@@ -412,7 +417,13 @@ export function createPipeline(deps) {
             context: tweet?.context ?? null,
             textPreview: String(tweet?.text ?? '').slice(0, 160),
           },
-          decision: { band: decision.band, reasons: decision.reasons, source: decision.source, detail: decision.detail },
+          decision: {
+            band: decision.band,
+            category: decision.category,
+            reasons: decision.reasons,
+            source: decision.source,
+            detail: decision.detail,
+          },
           accountAction: decision.accountAction,
         })
         .catch(() => {});
@@ -448,7 +459,7 @@ export function createPipeline(deps) {
       return promise;
     },
     stats() {
-      return { ...stats, bands: { ...stats.bands }, cacheSize: cache.size, inflight: inflight.size };
+      return { ...stats, bands: { ...stats.bands }, categories: { ...stats.categories }, cacheSize: cache.size, inflight: inflight.size };
     },
     clearCache() {
       cache.clear();

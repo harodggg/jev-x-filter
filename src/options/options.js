@@ -115,6 +115,11 @@ function renderStats(state) {
     ['累计判定', state.cumulative?.decisions ?? 0],
     ['累计动作', state.cumulative?.actions ?? 0],
   ];
+  const byCategory = s.categories ?? {};
+  for (const [cat, count] of Object.entries(byCategory)) {
+    if (!count) continue;
+    rows.push([`类别 · ${cat}`, count]);
+  }
   box.innerHTML = '';
   for (const [label, value] of rows) {
     const cell = document.createElement('div');

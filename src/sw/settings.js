@@ -49,7 +49,8 @@ export const API_PRESETS = {
 };
 
 export const DEFAULT_SETTINGS = {
-  schema: 1,
+  /** 2 = 信息过滤器（多类别）；1 = 早期的黄推过滤器。normalizeSettings 会迁移旧键。 */
+  schema: 2,
   enabled: true,
   api: {
     preset: 'typesafe',
@@ -80,9 +81,15 @@ export const DEFAULT_SETTINGS = {
     dualAdult: 0.8,
     dualSolicitation: 0.8,
     dualConfidence: 0.95,
-    /** 预检（单问）：≥ baitReview 只隐藏待确认；≥ baitEscalate 再花一次完整四问。 */
-    baitReview: 0.65,
-    baitEscalate: 0.75,
+    /** 预检（单问）：≥ junkReview 只隐藏待确认；≥ junkEscalate 再花一次完整五问。 */
+    junkReview: 0.65,
+    junkEscalate: 0.75,
+    /** 账号动作者要的程度分与欺骗概率（与 blockNoul/blockConfidence 并列的硬度证据）。 */
+    blockSeverity: 2,
+    blockDeceptive: 0.85,
+    /** 隐藏/待确认的程度分与置信度线。 */
+    hideSeverity: 2,
+    reviewConfidence: 0.3,
     /** 文案农场（重复刷屏）：至少要有一条这个量级的色情/诱饵信号才动手。 */
     farmBaitMin: 0.4,
     farmAdultMin: 0.4,
@@ -125,6 +132,18 @@ export const DEFAULT_SETTINGS = {
     visionModel: '',
     visionApiKey: '',
     visionTimeoutMs: 15000,
+  },
+  /**
+   * 类别开关：一个类别关掉 = 该类别不隐藏、不动作（宁可漏杀，不可误杀）。
+   * 键名是 `categories.js` 里的分组名；`farm` 是结构信号（同文案刷屏）单独一组。
+   */
+  categories: {
+    adult: { enabled: true },
+    scam: { enabled: true },
+    ad_spam: { enabled: true },
+    clickbait: { enabled: true },
+    low_quality: { enabled: true },
+    farm: { enabled: true },
   },
   /**
    * 文案农场（重复刷屏）检测：同一段无实质内容的话被 N 个不同账号在短时间内复制。
@@ -180,11 +199,19 @@ export const DEFAULT_SETTINGS = {
  * 永远返回一个完整可用的 settings 对象。
  */
 export function normalizeSettings(raw) {
-  const merged = mergeKnown(DEFAULT_SETTINGS, isPlainObject(raw) ? raw : {});
+  const input = isPlainObject(raw) ? { ...raw } : {};
+  // ---- 迁移：v0.2 的 baitReview/baitEscalate → v0.3 的 junkReview/junkEscalate ----
+  if (isPlainObject(input.thresholds)) {
+    const t = { ...input.thresholds };
+    if (t.junkReview === undefined && t.baitReview !== undefined) t.junkReview = t.baitReview;
+    if (t.junkEscalate === undefined && t.baitEscalate !== undefined) t.junkEscalate = t.baitEscalate;
+    input.thresholds = t;
+  }
+  const merged = mergeKnown(DEFAULT_SETTINGS, input);
   const s = merged;
 
   s.enabled = Boolean(s.enabled);
-  s.schema = 1;
+  s.schema = 2;
 
   if (!API_PRESETS[s.api.preset]) s.api.preset = 'zen';
   s.api.baseURL = String(s.api.baseURL || '').trim().replace(/\/+$/, '');
@@ -204,12 +231,19 @@ export function normalizeSettings(raw) {
   s.thresholds.dualAdult = clampNumber(s.thresholds.dualAdult, 0.5, 1, 0.8);
   s.thresholds.dualSolicitation = clampNumber(s.thresholds.dualSolicitation, 0.5, 1, 0.8);
   s.thresholds.dualConfidence = clampNumber(s.thresholds.dualConfidence, 0.5, 1, 0.95);
-  s.thresholds.baitReview = clampNumber(s.thresholds.baitReview, 0.3, 1, 0.65);
-  s.thresholds.baitEscalate = clampNumber(s.thresholds.baitEscalate, 0.3, 1, 0.75);
+  s.thresholds.junkReview = clampNumber(s.thresholds.junkReview, 0.3, 1, 0.65);
+  s.thresholds.junkEscalate = clampNumber(s.thresholds.junkEscalate, 0.3, 1, 0.75);
+  s.thresholds.blockSeverity = clampNumber(s.thresholds.blockSeverity, 1, 4, 2);
+  s.thresholds.blockDeceptive = clampNumber(s.thresholds.blockDeceptive, 0.5, 1, 0.85);
+  s.thresholds.hideSeverity = clampNumber(s.thresholds.hideSeverity, 1, 4, 2);
+  s.thresholds.reviewConfidence = clampNumber(s.thresholds.reviewConfidence, 0.1, 1, 0.3);
   s.thresholds.farmBaitMin = clampNumber(s.thresholds.farmBaitMin, 0, 1, 0.4);
   s.thresholds.farmAdultMin = clampNumber(s.thresholds.farmAdultMin, 0, 1, 0.4);
   // 升级线不应低于隐藏线，否则「只隐藏」这条路径形同虚设。
-  s.thresholds.baitEscalate = Math.max(s.thresholds.baitEscalate, s.thresholds.baitReview);
+  s.thresholds.junkEscalate = Math.max(s.thresholds.junkEscalate, s.thresholds.junkReview);
+  // 待确认线不应高于隐藏线，否则中间地带为空。
+  s.thresholds.reviewConfidence = Math.min(s.thresholds.reviewConfidence, s.thresholds.hideConfidence);
+  s.thresholds.hideSeverity = Math.min(s.thresholds.hideSeverity, s.thresholds.blockSeverity);
   // 隐藏阈值不应高于拉黑阈值，否则中间地带为空。
   s.thresholds.hideNoul = Math.min(s.thresholds.hideNoul, s.thresholds.blockNoul);
   s.thresholds.hideConfidence = Math.min(s.thresholds.hideConfidence, s.thresholds.blockConfidence);
@@ -230,6 +264,10 @@ export function normalizeSettings(raw) {
   s.media.visionModel = String(s.media.visionModel || '').trim();
   s.media.visionApiKey = String(s.media.visionApiKey || '').trim();
   s.media.visionTimeoutMs = clampInt(s.media.visionTimeoutMs, 1000, 60000, 15000);
+
+  for (const [group, value] of Object.entries(s.categories)) {
+    s.categories[group] = { enabled: value?.enabled !== false };
+  }
 
   s.farm.enabled = Boolean(s.farm.enabled);
   s.farm.windowMs = clampInt(s.farm.windowMs, 60000, 86400000, 1800000);

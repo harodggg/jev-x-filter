@@ -1,9 +1,9 @@
 {
-  "name": "jev-x-filter",
-  "version": "0.2.1",
+  "name": "info-filter-jev",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "黄推过滤器（Jev 判定）——Chrome MV3 扩展：用 TypeSafe Jev / System One 的类型化决策过滤 x.com 上的色情推广内容",
+  "description": "信息过滤器 · Jev —— Chrome MV3 扩展：用 TypeSafe Jev / System One 的类型化决策过滤 x.com 时间线上的色情引流、诈骗、广告导流、标题党、低质 AI 与刷屏农场",
   "scripts": {
     "test": "node --test tests/",
     "check": "node tools/check-sources.js",

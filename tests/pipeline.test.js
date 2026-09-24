@@ -12,10 +12,11 @@ const noulAnswer = (noul) => ({ type: 'noul', noul });
 const choiceAnswer = (choice, confidence, probabilities = {}) => ({ type: 'choice', choice, confidence, probabilities });
 const scoreAnswer = (score, confidence = 0.8) => ({ type: 'score', score, confidence, legend: {}, probabilities: {} });
 
-function answersFor({ adult = 0.1, sol = 0.1, cat = 'ordinary', conf = 0.4, sev = 0 } = {}) {
+function answersFor({ adult = 0.1, sol = 0.1, dec = 0, cat = 'ordinary', conf = 0.4, sev = 2.5 } = {}) {
   return {
     adult: noulAnswer(adult),
     solicitation: noulAnswer(sol),
+    deceptive: noulAnswer(dec),
     category: choiceAnswer(cat, conf),
     severity: scoreAnswer(sev),
   };
@@ -41,10 +42,10 @@ const ORDINARY_TWEET = {
  * 按请求里问了几问来分派答案：
  * 只问 1 问（bait）= 预检；问 4 问 = 完整判定。真实网关就是这么被调用的。
  */
-function scriptedAnswers({ bait = 0.05, full = null } = {}) {
+function scriptedAnswers({ junk = 0.05, full = null } = {}) {
   return (request) => {
     const ids = Object.keys(request?.questions ?? {});
-    if (ids.length === 1 && ids[0] === 'bait') return { bait: noulAnswer(bait) };
+    if (ids.length === 1 && ids[0] === 'junk') return { junk: noulAnswer(junk) };
     return full ?? answersFor();
   };
 }
@@ -90,12 +91,12 @@ test('色情引流推文：block 档 + 演练模式下不执行动作，但仍�
   assert.equal(actions.length, 1, 'block 档要能被后台记入黑名单');
 });
 
-test('普通推文：默认只花一次廉价预检单问（不是四问），随后放行', async () => {
-  const { pipeline, jev } = harness({ answers: scriptedAnswers({ bait: 0.05 }) });
+test('普通推文：默认只花一次廉价预检单问（不是五问），随后放行', async () => {
+  const { pipeline, jev } = harness({ answers: scriptedAnswers({ junk: 0.05 }) });
   const decision = await pipeline.decide(ORDINARY_TWEET);
   assert.equal(decision.band, 'ignore');
   assert.equal(jev.calls.length, 1, '预检 = 一次单问');
-  assert.deepEqual(Object.keys(jev.calls[0].questions), ['bait'], '预检只问 bait 一问');
+  assert.deepEqual(Object.keys(jev.calls[0].questions), ['junk'], '预检只问 junk 一问');
   assert.equal(pipeline.stats().triageProbes, 1);
 });
 
@@ -112,7 +113,7 @@ test('关掉预检 → 回到「只有候选才花钱」的 0 请求模式', asy
 });
 
 test('预检未命中（低分）→ 放行，且不跑完整四问', async () => {
-  const { pipeline, jev } = harness({ answers: scriptedAnswers({ bait: 0.12 }) });
+  const { pipeline, jev } = harness({ answers: scriptedAnswers({ junk: 0.12 }) });
   const decision = await pipeline.decide(ORDINARY_TWEET);
   assert.equal(decision.band, 'ignore');
   assert.equal(jev.calls.length, 1);
@@ -129,10 +130,10 @@ test('预检命中（≥0.65 但 < 0.75）→ 隐藏成待确认，绝不动作�
     media: [],
     context: 'timeline',
   };
-  const { pipeline, jev, actions } = harness({ answers: scriptedAnswers({ bait: 0.7 }) });
+  const { pipeline, jev, actions } = harness({ answers: scriptedAnswers({ junk: 0.7 }) });
   const decision = await pipeline.decide(BaitTweet);
   assert.equal(decision.band, 'review');
-  assert.ok(decision.reasons.includes('adult_bait_probe'));
+  assert.ok(decision.reasons.includes('junk_probe'));
   assert.equal(decision.source, 'triage');
   assert.equal(decision.accountAction.kind, 'none');
   assert.equal(actions.length, 0, '预检永远不产生账号动作');
@@ -143,23 +144,23 @@ test('预检很确信（≥0.75）→ 升级为完整四问，仍受强类别闸
   // 注意：正文里不能出现任何本地强特征，否则它就直接走四问了（那是对照组的另一条路径）
   const BaitTweet = { id: 'bait2', handle: 'yrmyzhcxvlkzpu', displayName: 'yrmyzh cxvlu', text: '比我好看的没我骚🔧👏比我骚的没我好看', media: [], context: 'timeline' };
   const { pipeline, jev } = harness({
-    answers: scriptedAnswers({ bait: 0.93, full: answersFor({ adult: 0.97, sol: 0.95, cat: 'adult_solicitation', conf: 0.94 }) }),
+    answers: scriptedAnswers({ junk: 0.93, full: answersFor({ adult: 0.97, sol: 0.95, cat: 'adult_solicitation', conf: 0.94 }) }),
   });
   const decision = await pipeline.decide(BaitTweet);
-  assert.equal(jev.calls.length, 2, '预检 + 升级后的四问');
+  assert.equal(jev.calls.length, 2, '预检 + 升级后的五问');
   assert.ok(decision.detail.triage.escalated);
   assert.equal(decision.band, 'block');
   assert.equal(decision.source, 'jev');
 });
 
 test('预检预算/采样率受限时不发起调用', async () => {
-  const noBudget = harness({ answers: scriptedAnswers({ bait: 0.9 }), settingsPatch: { triage: { enabled: true, sampleRate: 1, maxPerMinute: 20, maxPerDay: 0 } } });
+  const noBudget = harness({ answers: scriptedAnswers({ junk: 0.9 }), settingsPatch: { triage: { enabled: true, sampleRate: 1, maxPerMinute: 20, maxPerDay: 0 } } });
   const r1 = await noBudget.pipeline.decide(ORDINARY_TWEET);
   assert.equal(r1.band, 'ignore');
   assert.equal(noBudget.jev.calls.length, 0);
   assert.equal(r1.detail.triage.skipped, 'triage_budget_exhausted');
 
-  const noSample = harness({ answers: scriptedAnswers({ bait: 0.9 }), settingsPatch: { triage: { enabled: true, sampleRate: 0, maxPerMinute: 20, maxPerDay: 600 } } });
+  const noSample = harness({ answers: scriptedAnswers({ junk: 0.9 }), settingsPatch: { triage: { enabled: true, sampleRate: 0, maxPerMinute: 20, maxPerDay: 600 } } });
   const r2 = await noSample.pipeline.decide(ORDINARY_TWEET);
   assert.equal(r2.band, 'ignore');
   assert.equal(noSample.jev.calls.length, 0);
@@ -168,7 +169,7 @@ test('预检预算/采样率受限时不发起调用', async () => {
 
 test('随机账号名（乱码 handle）会提高本地点数，但单独不足以隐藏', async () => {
   const randomHandle = { id: 'r1', handle: 'yrmyzhcxvlkzpu', displayName: 'yrmyzh cxvlu', text: '晚上好呀朋友们', media: [], context: 'timeline' };
-  const { pipeline } = harness({ answers: scriptedAnswers({ bait: 0.05 }) });
+  const { pipeline } = harness({ answers: scriptedAnswers({ junk: 0.05 }) });
   const decision = await pipeline.decide(randomHandle);
   assert.equal(decision.band, 'ignore');
   assert.equal(decision.prefilter.randomName, true);
@@ -378,7 +379,7 @@ test('统计数据反映成本（调用数 / 零请求跳过 / 各档位计数 /
   assert.equal(stats.triageProbes, 0);
 
   // 打开预检：普通推文多一次廉价单问
-  const withTriage = harness({ answers: scriptedAnswers({ bait: 0.05, full: answersFor({ adult: 0.97, cat: 'adult_porn', conf: 0.9 }) }) });
+  const withTriage = harness({ answers: scriptedAnswers({ junk: 0.05, full: answersFor({ adult: 0.97, cat: 'adult_porn', conf: 0.9 }) }) });
   await withTriage.pipeline.decide(SPAM_TWEET);
   await withTriage.pipeline.decide(ORDINARY_TWEET);
   const stats2 = withTriage.pipeline.stats();
@@ -415,7 +416,7 @@ test('真站漏检样本回归：正文无害、引流在显示名 → 至少隐
 });
 
 test('文案农场：同一段文案被 2 个账号刷出 → 第二条起隐藏并打上 farm 标记', async () => {
-  const { pipeline } = harness({ answers: scriptedAnswers({ bait: 0.54 }) });
+  const { pipeline } = harness({ answers: scriptedAnswers({ junk: 0.54 }) });
   const base = { displayName: '靖柏🌸', text: '应该没人比我玩的开了吧🤣💖我福不黑不信你看', media: [], context: 'reply' };
   const d1 = await pipeline.decide({ ...base, id: 'f1', handle: 'ThomasTurnyysr' });
   const d2 = await pipeline.decide({ ...base, id: 'f2', handle: 'TinaMysersyro' });
@@ -432,7 +433,7 @@ test('文案农场：同一段文案被 2 个账号刷出 → 第二条起隐藏
 });
 
 test('真站样本：emoji 拆字（处🐕男）+ 显示名黑话（处男免费）→ 两条都隐藏，默认不动作', async () => {
-  const { pipeline, actions } = harness({ answers: scriptedAnswers({ bait: 0.7, full: answersFor({ adult: 0.74, cat: 'adult_solicitation', conf: 0.25 }) }) });
+  const { pipeline, actions } = harness({ answers: scriptedAnswers({ junk: 0.7, full: answersFor({ adult: 0.74, cat: 'adult_solicitation', conf: 0.25 }) }) });
   const first = await pipeline.decide({
     id: 'e1',
     handle: 'czex7Jacquline',
@@ -462,7 +463,7 @@ test('真站样本：emoji 拆字（处🐕男）+ 显示名黑话（处男免�
 
 test('文案农场 + 「隐藏档也静音」→ 农场账号被静音（仅用户显式打开时）', async () => {
   const { pipeline } = harness({
-    answers: scriptedAnswers({ bait: 0.54 }),
+    answers: scriptedAnswers({ junk: 0.54 }),
     settingsPatch: { action: { ...DEFAULT_SETTINGS.action, dryRun: false, autoMute: true, muteOnHide: true } },
   });
   const base = { displayName: '乐乐❤️处男无偿❤️', text: '太阳射☀️不进去的地方💪你可以', media: [], context: 'reply' };
@@ -477,7 +478,7 @@ test('文案农场 + 「隐藏档也静音」→ 农场账号被静音（仅用�
 
 test('关掉农场检测 → 同样的刷屏不再命中', async () => {
   const { pipeline } = harness({
-    answers: scriptedAnswers({ bait: 0.54 }),
+    answers: scriptedAnswers({ junk: 0.54 }),
     settingsPatch: { farm: { enabled: false } },
   });
   const base = { text: '应该没人比我玩的开了吧🤣💖我福不黑不信你看', media: [], context: 'reply' };
@@ -491,7 +492,7 @@ test('关掉农场检测 → 同样的刷屏不再命中', async () => {
 test('缓存指纹覆盖动作与预检/农场配置：切换「自动静音」后必须重新判定', async () => {
   const spy = { decide: async () => ({ band: 'hide' }) };
   const { pipeline, jev, setSettings } = harness({
-    answers: scriptedAnswers({ bait: 0.05, full: answersFor({ adult: 0.97, sol: 0.95, cat: 'adult_solicitation', conf: 0.94 }) }),
+    answers: scriptedAnswers({ junk: 0.05, full: answersFor({ adult: 0.97, sol: 0.95, cat: 'adult_solicitation', conf: 0.94 }) }),
   });
   const first = await pipeline.decide(SPAM_TWEET);
   assert.equal(first.accountAction.execute, false, '默认演练模式');
