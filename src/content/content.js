@@ -12,7 +12,7 @@
 
   const S = globalThis.JevXSelectors;
   const X = globalThis.JevXExtract;
-  const VERSION = '0.4.5';
+  const VERSION = '0.4.6';
 
   const state = {
     settings: null,
@@ -27,6 +27,8 @@
     lastActionAt: 0,
     /** 最近一次账号动作失败的原因与当时的菜单内容（供设置页/端到端诊断选择器漂移）。 */
     lastActionError: null,
+    /** 最近一次内容脚本异常（真站排障用；不算判定失败，只说明某条 DOM 出乎意料）。 */
+    lastError: null,
     /** 失败**历史**（最多 10 条）：一次失败之后如果还有别的推文动作成功，只留 lastActionError 就会被清掉，
      *  真站排障时「为什么这条没静音」需要的是历史而不是最后一刻的状态。 */
     actionErrors: [],
@@ -859,51 +861,86 @@
     clearEmotionBadge(article);
   }
 
+  /**
+   * 单条推文的判定。
+   *
+   * 真站 DOM 千奇百怪（虚拟列表回收、标记为推文的容器其实没有文案、X 改版换了结构…），
+   * 而调用方是 `void inspectArticle(article)` —— 这里一旦抛异常就会变成**未捕获的 Promise 异常**，
+   * 在 chrome://extensions 上表现为扩展卡片的「错误」按钮。所有意外都在这里兜住：
+   * 计数 + 记审计 + 标 `error` 态，绝不让它冒到外面。
+   */
   async function inspectArticle(article) {
     if (!state.enabled || !article.isConnected) return;
-    const tweet = X.parseTweet(article);
-    if (!tweet.handle && !tweet.text && !tweet.hasMedia) return;
-    const key = X.tweetKey(tweet);
-    article.dataset.jevxKey = key;
-    article.dataset.jevxState = 'pending';
+    let tweet = null;
+    try {
+      tweet = X.parseTweet(article);
+      if (!tweet.handle && !tweet.text && !tweet.hasMedia) return;
+      const key = X.tweetKey(tweet);
+      article.dataset.jevxKey = key;
+      article.dataset.jevxState = 'pending';
 
-    const response = await send('JEVX_DECIDE', { tweet });
-    if (!response?.ok) {
-      state.errors += 1;
-      article.dataset.jevxState = 'error';
-      audit('error', tweet, { error: response?.error ?? 'decide_failed' });
-      return;
-    }
-    const decision = response.decision;
-    state.decisions.set(key, decision);
-    article.dataset.jevxState = decision.band;
-    article.dataset.jevxSource = decision.source ?? '';
-    const farmKey = indexFarm(article, tweet);
-    applyDecision(article, tweet, decision);
-    if (decision.farm?.hit) {
-      const extra = retroHideFarm(decision.farm.samples ?? [farmKey ?? decision.farm.key], decision, article);
-      if (extra > 0) {
-        state.farmRetroHidden = (state.farmRetroHidden ?? 0) + extra;
-        audit('farm_retro_hidden', tweet, { farm: decision.farm, extra });
+      const response = await send('JEVX_DECIDE', { tweet });
+      if (!response?.ok) {
+        state.errors += 1;
+        article.dataset.jevxState = 'error';
+        audit('error', tweet, { error: response?.error ?? 'decide_failed' });
+        return;
       }
+      const decision = response.decision;
+      state.decisions.set(key, decision);
+      article.dataset.jevxState = decision.band;
+      article.dataset.jevxSource = decision.source ?? '';
+      const farmKey = indexFarm(article, tweet);
+      applyDecision(article, tweet, decision);
+      if (decision.farm?.hit) {
+        const extra = retroHideFarm(decision.farm.samples ?? [farmKey ?? decision.farm.key], decision, article);
+        if (extra > 0) {
+          state.farmRetroHidden = (state.farmRetroHidden ?? 0) + extra;
+          audit('farm_retro_hidden', tweet, { farm: decision.farm, extra });
+        }
+      }
+    } catch (error) {
+      holdError(article, tweet, error, 'inspect');
     }
+  }
+
+  /** 把意外兜住：计数、标错、记审计、写调试日志（不抛）。 */
+  function holdError(article, tweet, error, stage) {
+    state.errors += 1;
+    state.lastError = { stage, error: String(error?.message ?? error), at: Date.now() };
+    try {
+      if (article?.dataset) article.dataset.jevxState = 'error';
+    } catch {
+      /* ignore */
+    }
+    try {
+      audit('error', tweet, { error: state.lastError.error, stage });
+    } catch {
+      /* ignore */
+    }
+    log(`判定过程异常（已兜住 · ${stage}）`, state.lastError.error);
   }
 
   function registerArticle(article) {
     if (!state.enabled || !article.isConnected) return;
-    const signature = signatureOf(article);
-    if (article.dataset.jevxSig === signature && article.dataset.jevxEpoch === String(state.epoch)) return;
-    if (article.dataset.jevxSig && article.dataset.jevxSig !== signature) {
-      // 节点被复用成另一条推文：先还原，再按新内容重新判定
-      resetArticle(article);
+    try {
+      const signature = signatureOf(article);
+      if (article.dataset.jevxSig === signature && article.dataset.jevxEpoch === String(state.epoch)) return;
+      if (article.dataset.jevxSig && article.dataset.jevxSig !== signature) {
+        // 节点被复用成另一条推文：先还原，再按新内容重新判定
+        resetArticle(article);
+      }
+      article.dataset.jevxSig = signature;
+      article.dataset.jevxEpoch = String(state.epoch);
+      if (state.settings?.scope?.onlyVisible && intersectionObserver) {
+        intersectionObserver.observe(article);
+        return;
+      }
+      void inspectArticle(article);
+    } catch (error) {
+      // 单条推文的 DOM 再奇怪也不能掀翻整轮扫描（否则同屏其它推文一起不判定了）。
+      holdError(article, null, error, 'register');
     }
-    article.dataset.jevxSig = signature;
-    article.dataset.jevxEpoch = String(state.epoch);
-    if (state.settings?.scope?.onlyVisible && intersectionObserver) {
-      intersectionObserver.observe(article);
-      return;
-    }
-    void inspectArticle(article);
   }
 
   function scan() {
@@ -1033,6 +1070,7 @@
       alphaMarked: countAlphaMarked(),
       emotionMarked: S.findTweets(document).filter((a) => a.dataset.jevxEmotion).length,
       lastActionError: state.lastActionError ?? null,
+      lastError: state.lastError ?? null,
       actionErrors: state.actionErrors.slice(-10),
     }),
   };

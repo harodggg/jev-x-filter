@@ -131,6 +131,12 @@ img{width:80px;height:80px}[role=menuitem]{padding:8px;cursor:pointer}
   ${article('901', 'ThomasTurnyysr', FARM_TEXT, { displayName: '靖柏🌸' })}
   ${article('902', 'TinaMysersyro', FARM_TEXT, { displayName: '夜蓉🌸' })}
   ${article('903', 'TimothyAndjqqx', FARM_TEXT, { displayName: '迎晴🌸' })}
+  <!-- 畸形 DOM 回归（用户反馈扩展卡片出现「错误」按钮）：空推文容器与半截推文，
+       内容脚本必须兜住、不能变成未捕获异常，也不能影响同屏其它推文的判定。 -->
+  <div data-testid="cellInnerDiv"><article data-testid="tweet" id="tweet-1998"></article></div>
+  <div data-testid="cellInnerDiv">
+    <article data-testid="tweet" id="tweet-1999"><a href="/status/"></a><div data-testid="tweetText"></div></article>
+  </div>
 </div>
 <script>${fixtureScript()}</script>
 </body></html>`;
@@ -761,16 +767,33 @@ async function main() {
       return { cdp, errors, targetId };
     };
 
+    /** Service Worker 的未捕获异常 / console.error（扩展卡片上的「错误」按钮就是它们）。 */
+    const swErrors = [];
     const swTarget = async () => {
       const targets = await listTargets();
+      // 注意：SW 可能被回收后再起一个，所以每次都按 url 找当前那个。
       const found = targets.find((t) => (t.type === 'service_worker' || t.type === 'worker') && t.url.includes(extId));
       if (!found) return null;
       const cdp = await CDP.connect(found.webSocketDebuggerUrl);
+      cdp.on('Runtime.exceptionThrown', (params) => {
+        const details = params.exceptionDetails ?? {};
+        swErrors.push(details.exception?.description ?? details.text ?? 'unknown');
+      });
+      cdp.on('Runtime.consoleAPICalled', (params) => {
+        if (params.type === 'error') swErrors.push('console.error: ' + (params.args ?? []).map((a) => a.value ?? a.description ?? '').join(' '));
+      });
       await cdp.send('Runtime.enable');
       return cdp;
     };
 
     // ---- 2. 通过设置页写入测试配置（mock 网关 + 审计 webhook） ----
+    // 尽早连上 SW（加载期/首次消息期的异常也要收）：连上后一直挂着，直到最后断言。
+    let swWatch = null;
+    for (let i = 0; i < 20 && !swWatch; i += 1) {
+      swWatch = await swTarget().catch(() => null);
+      if (!swWatch) await sleep(250);
+    }
+
     const optionsUrl = `chrome-extension://${extId}/src/options/options.html`;
     const optionsPage = await openPage(optionsUrl);
     await sleep(1200);
@@ -1460,6 +1483,11 @@ async function main() {
     check('弹窗显示统计与模型状态', popupProbe.cells >= 6 && /jev-test|就绪/.test(popupProbe.status), `${popupProbe.status} / ${popupProbe.cells} 格`);
     check('弹窗显示当前模式（演练/武装 + 静音范围）', /演练|武装/.test(popupProbe.mode ?? ''), popupProbe.mode);
     check('弹窗无脚本异常', popupPage.errors.length === 0, popupPage.errors.slice(0, 2).join(' | '));
+
+    // 扩展卡片上的「错误」按钮 = SW 的未捕获异常 / console.error。用户截图里出现这个按钮，
+    // 但此前的端到端只检查了页面/设置页/弹窗 —— 这里补上（swWatch 从扩展加载后就挂着）。
+    swWatch?.close();
+    check('Service Worker 没有未捕获异常（扩展卡片的「错误」按钮为空）', swErrors.length === 0, JSON.stringify(swErrors.slice(0, 3)));
     const popupToggle = await popupPage.cdp.evaluate(`(async () => {
       const before = await new Promise((resolve) => chrome.runtime.sendMessage({ type: 'JEVX_GET_STATE' }, resolve));
       const box = document.getElementById('semBeta');
@@ -1498,6 +1526,7 @@ async function main() {
     check('导入通道可用', listProbe.imported?.ok === true && listProbe.imported.added === 2, JSON.stringify(listProbe.imported ?? {}));
     check('导出内容包含全部账号', /imported_one/.test(listProbe.exported ?? '') && /spammer1|escort4/.test(listProbe.exported ?? ''), listProbe.after?.join(','));
 
+    swWatch?.close();
     for (const page of [optionsPage, pageA, pageB, pageC, pageD, pageE, pageF, pageG, pageH, pageH2, pageI, popupPage]) page.cdp.close();
     browser.close();
   } finally {

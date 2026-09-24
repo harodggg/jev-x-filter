@@ -1,6 +1,6 @@
 # 信息过滤器 · Jev
 
-**当前版本：0.4.5**（`npm run package` 生成 `dist/jev-x-filter-0.4.5.zip`，也可直接加载本目录）
+**当前版本：0.4.6**（`npm run package` 生成 `dist/jev-x-filter-0.4.6.zip`，也可直接加载本目录）
 
 用 **Jev（TypeSafe System One）** 的类型化决策在浏览器本地过滤 X（x.com / twitter.com）时间线、
 回复区与推荐流里的**垃圾信息**，不是只过滤色情：色情/性交易引流、诈骗/博彩/荐股、
@@ -32,6 +32,24 @@ x.com 页面                       Service Worker（唯一网络出口）       
 ---
 
 ## 0. 更新日志
+
+### 0.4.6 —— 「扩展卡片出现错误按钮」的加固与排障
+
+用户反馈 chrome://extensions 上扩展卡片出现了「错误」按钮。自动化验证（真实 Chrome，
+**从扩展加载起就挂着 Service Worker 的异常监听**）显示 0.4.5 的 SW / 页面 / 设置页 / 弹窗都是 **0 异常**，
+所以最可能的来源是**真站某个出乎意料的 DOM** 让内容脚本抛了异常 —— 而调用方是
+`void inspectArticle(article)`，一抛就是未捕获的 Promise 异常，正好会点亮那个按钮。这一版把它堵死：
+
+- **内容脚本全链路兜底**：`inspectArticle` / `registerArticle` 的意外不再外抛 —— 计数、标 `error` 态、
+  写审计（`stage: inspect|register`）、写 `__jevxContent.summary().lastError`，同屏其它推文照常判定。
+- **端到端补上 SW 异常断言**：harness 现在从扩展加载起就监听 Service Worker 的 `Runtime.exceptionThrown`
+  与 `console.error`，并断言「扩展卡片的『错误』按钮为空」（之前只检查页面/设置页/弹窗，SW 抛异常看不见）。
+- **畸形 DOM 回归**：夹具里加了「空推文容器」与「半截推文」（没有文案、没有作者、坏链接），
+  断言页面零脚本异常且其它推文照常隐藏/判定。
+
+**如果你的卡片上已经出现过「错误」**：点「错误」→ 右上「清除所有」（Clear all）→ 再点卡片上的「重新加载」。
+Chrome 会把历史错误一直累积在同一张卡片上，所以那条提示可能来自更早的版本或某次加载；清掉之后若再出现，
+把里面的文本发我（含文件名与行号），我按它定位。
 
 ### 0.4.5 —— 情绪整理覆盖**时间线**（不再只在回复区）+ 修掉独立验证发现的 4 处误伤
 
@@ -493,7 +511,7 @@ tools/verify-in-chrome.js     真实 Chrome 端到端（mock Jev 网关 + 仿 X 
 ```bash
 npm run check     # 静态自检：21 项（manifest、权限最小化、无远程代码/eval、37 个 JS 文件语法）
 npm test          # 289 个单测：协议契约、类别闸门、预筛、近似农场、α/β 语义层、菜单识别（含对抗）、图片像素、黑名单、审计、流水线
-npm run verify    # 真实 Chrome 端到端：143 项断言（含 α/β、菜单自动化鲁棒性、隐藏档静音边界）
+npm run verify    # 真实 Chrome 端到端：144 项断言（含 α/β、菜单自动化鲁棒性、隐藏档静音边界）
 npm run all       # 以上三步
 npm run package   # 打包 dist/jev-x-filter-<版本>.zip（可直接加载的产物）
 
