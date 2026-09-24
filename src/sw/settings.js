@@ -171,6 +171,46 @@ export const DEFAULT_SETTINGS = {
     maxPerMinute: 20,
     maxPerDay: 600,
   },
+  /**
+   * α / β 语义层（只做「折叠展示」与「标记」，**绝不改变 band / accountAction** —— 不变量 I1）。
+   *
+   * - β：重复 / 类似 / 同一主张 → 只显示一次（`decision.beta.duplicateOf` + `folded`）；
+   *   候选先在本地筛（归一化文本 3-gram ≥0.45、同 threadId、同农场簇），命中才发一次模型调用。
+   *   `foldInFeed` / `foldInReplies` 决定哪些场景允许折叠（timeline/recommended 看前者，reply 看后者）；
+   *   对应开关关掉时连 β 的问题都不发。
+   * - α：与回复区多数观点明显不同 → 只标记（`decision.alpha.hit` + `score`），不隐藏；
+   *   只在 `onlyInReplies` 的场景（reply）且参考评论数 ≥ `minReferences` 时判定。
+   * - `maxPerMinute` / `maxPerDay` 是语义整理**自己的**额度上限；语义调用同时计入
+   *   `budget.maxJevPerDay` / `budget.maxJevPerMinute` —— 全局上限必须真正兜得住。
+   * - `reserveForFiltering` 是给过滤留的**全局** Jev 额度保底（内部调参，不在设置页暴露）：
+   *   全局剩余 ≤ 该值时语义层不再调用，保证类判定与预检永远有额度可用。
+   */
+  semantics: {
+    enabled: true,
+    /** 给过滤（类判定 / 预检）留的全局 Jev 额度保底。 */
+    reserveForFiltering: 50,
+    beta: {
+      enabled: true,
+      /** 组内 max(模型 noul) ≥ 该值 → 折叠。 */
+      threshold: 0.7,
+      /** 一轮最多比较几条候选（也是问题数上限）。 */
+      maxCandidates: 6,
+      /** 本地候选窗口：最近多少条推文。 */
+      windowSize: 60,
+      foldInFeed: true,
+      foldInReplies: true,
+    },
+    alpha: {
+      enabled: true,
+      onlyInReplies: true,
+      /** `alpha_majority` 概率 ≥ 该值 → 标记（另加本地相似度护栏）。 */
+      threshold: 0.7,
+      minReferences: 3,
+      maxReferences: 12,
+    },
+    maxPerMinute: 10,
+    maxPerDay: 300,
+  },
   budget: {
     maxJevPerMinute: 30,
     maxJevPerDay: 800,
@@ -280,6 +320,26 @@ export function normalizeSettings(raw) {
   s.triage.sampleRate = clampNumber(s.triage.sampleRate, 0, 1, 1);
   s.triage.maxPerMinute = clampInt(s.triage.maxPerMinute, 0, 600, 20);
   s.triage.maxPerDay = clampInt(s.triage.maxPerDay, 0, 100000, 600);
+
+  // ---- α / β 语义层 ----
+  s.semantics.enabled = Boolean(s.semantics.enabled);
+  s.semantics.reserveForFiltering = clampInt(s.semantics.reserveForFiltering, 0, 100000, 50);
+  s.semantics.beta.enabled = Boolean(s.semantics.beta.enabled);
+  s.semantics.beta.threshold = clampNumber(s.semantics.beta.threshold, 0, 1, 0.7);
+  // 允许 0：等于「本地不选候选」，与关掉 β 等效（也让单测能精确构造「0 候选」）。
+  s.semantics.beta.maxCandidates = clampInt(s.semantics.beta.maxCandidates, 0, 30, 6);
+  s.semantics.beta.windowSize = clampInt(s.semantics.beta.windowSize, 0, 500, 60);
+  s.semantics.beta.foldInFeed = Boolean(s.semantics.beta.foldInFeed);
+  s.semantics.beta.foldInReplies = Boolean(s.semantics.beta.foldInReplies);
+  s.semantics.alpha.enabled = Boolean(s.semantics.alpha.enabled);
+  s.semantics.alpha.onlyInReplies = Boolean(s.semantics.alpha.onlyInReplies);
+  s.semantics.alpha.threshold = clampNumber(s.semantics.alpha.threshold, 0, 1, 0.7);
+  s.semantics.alpha.minReferences = clampInt(s.semantics.alpha.minReferences, 1, 30, 3);
+  s.semantics.alpha.maxReferences = clampInt(s.semantics.alpha.maxReferences, 1, 50, 12);
+  // 参考上限不应低于参考下限，否则 α 永远无法判定。
+  s.semantics.alpha.maxReferences = Math.max(s.semantics.alpha.maxReferences, s.semantics.alpha.minReferences);
+  s.semantics.maxPerMinute = clampInt(s.semantics.maxPerMinute, 0, 600, 10);
+  s.semantics.maxPerDay = clampInt(s.semantics.maxPerDay, 0, 10000, 300);
 
   s.budget.maxJevPerMinute = clampInt(s.budget.maxJevPerMinute, 0, 600, 30);
   s.budget.maxJevPerDay = clampInt(s.budget.maxJevPerDay, 0, 100000, 800);

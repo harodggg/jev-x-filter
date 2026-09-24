@@ -96,6 +96,7 @@ function renderStats(state) {
   const box = document.getElementById('stats');
   const s = state.stats ?? {};
   const bands = s.bands ?? {};
+  const sem = s.semantics ?? {};
   const rows = [
     ['本会话判定数', s.decisions ?? 0],
     ['模型调用', s.jevCalls ?? 0],
@@ -104,6 +105,11 @@ function renderStats(state) {
     ['升级为四问', s.triageEscalated ?? 0],
     ['缓存命中', s.cacheHits ?? 0],
     ['预筛跳过（0 请求）', s.skips ?? 0],
+    ['β 折叠数', sem.betaFolds ?? 0],
+    ['α 标记数', sem.alphaHits ?? 0],
+    ['语义调用数', sem.calls ?? 0],
+    ['语义超预算跳过', sem.skipped ?? 0],
+    ['语义调用失败', sem.errors ?? 0],
     ['隐藏（高置信度）', bands.block ?? 0],
     ['隐藏', bands.hide ?? 0],
     ['待确认', bands.review ?? 0],

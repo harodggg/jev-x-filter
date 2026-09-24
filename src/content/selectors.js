@@ -58,12 +58,113 @@
   const BIDI = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
   const WRAPPERS = /[\u0022\u0027\u2018\u2019\u201c\u201d\u300c\u300d\uff02]/g;
 
+  /**
+   * 菜单项文案表（多语言）——**先排除反义项，再按目标匹配**。
+   *
+   * 两个真站教训都体现在这里：
+   * 1. 静音项没有 `data-testid`（拉黑有），只能靠文案；而文案前面可能带图标/双向控制符/前缀符号，
+   *    旧实现用行首锚定（`^静音`）就会失配 → 「自动动作失败：menu_item_not_found:mute」。
+   *    改成「非锚定包含」匹配。
+   * 2. 「取消静音」包含「静音」、西语「Dejar de silenciar」包含「silenciar」、法语「Débloquer」包含
+   *    「bloquer」——所以反义判断必须**先做**，否则会把「取消静音」当成「静音」点下去（点反）。
+   */
+  const LATIN_WORD = (word) => new RegExp(`(?:^|[^a-z0-9])${word}(?:$|[^a-z0-9])`, 'i');
+
   const MENU_LABEL = {
-    mute: /^(?:mute|静音|ミュート|음소거|stummschalten)/i,
-    unmute: /^(?:unmute|取消静音|取消隐藏|ミュート解除|음소거\s*해제|stummschaltung)/i,
-    block: /^(?:block|屏蔽|拉黑|封锁|封鎖|ブロック)/i,
-    unblock: /^(?:unblock|取消屏蔽|已屏蔽|ブロック解除|ブロックを解除)/i,
-    confirm: /^(?:block|屏蔽|拉黑|封锁|封鎖|ブロック|确认|確定|确定|confirm|ok)$/i,
+    mute: [
+      // 英文 mute 是短词：必须带词边界，否则 `commuter` 之类会被误命中
+      LATIN_WORD('mute'),
+      /silenci/i,
+      /silenzia/i,
+      /stummschalt/i,
+      /dempen/i,
+      /tysta/i,
+      /wycisz/i,
+      /bisukan/i,
+      /sessize/i,
+      /静音/,
+      /靜音/,
+      /ミュート/,
+      /음소거/,
+      /заглуш/i,
+      /كتم/,
+      /ปิดเสียง/,
+      /tắt tiếng/i,
+      /म्यूट/,
+    ],
+    unmute: [
+      LATIN_WORD('unmute'),
+      // 「否定词 + 词根」的开放集（pt-BR / ca / es 都是这个结构），别只列固定短语
+      /(?:deix(?:ar|a|e|es|em)|dej(?:ar|a|e|en))\s+de\s+silenciar/i,
+      /desilenciar/i,
+      /riattiva|attiva\s+l['’]?audio/i,
+      /dempen[-\s]?opheffen/i,
+      /odcisz|wyłącz\s+wyciszenie|włącz\s+dźwięk/i,
+      /aktifkan/i,
+      /sessizden/i,
+      /désactiver\s+le\s+silence|réactiver\s+le\s+son/i,
+      /取消静音|取消靜音|取消隐藏|取消隱藏/,
+      /ミュート解除|ミュートを解除/,
+      /음소거\s*해제/,
+      /stummschaltung\s*(?:aufheben|beenden)/i,
+      /разглуш|отменить заглуш|снять заглуш|включить звук/i,
+      /إلغاء كتم/,
+      /เปิดเสียง/,
+      /bật tiếng/i,
+      /अनम्यूट|म्यूट हटाएं/,
+    ],
+    block: [
+      LATIN_WORD('block'),
+      /blockier/i, // Blockieren / Blockierung
+      /bloqu/i, // Bloquear / Bloquer / Bloqueie / Bloqueja（含 Débloquer/Desbloquear → 由反义项先拦）
+      /blocca/i,
+      /blokkeren/i,
+      /blokuj/i,
+      /blokow/i, // Zablokować / Zablokowane（含 Odblokować → 由反义项先拦）
+      /blokir/i, // 含 Buka blokir → 由反义项先拦
+      /engelle/i,
+      /chặn/i, // 含 Bỏ chặn → 由反义项先拦
+      /屏蔽|拉黑|封锁|封鎖/,
+      /ブロック/,
+      /차단/,
+      /заблокировать/i,
+      /حظر/,
+      /บล็อก|ปิดกั้น/,
+      /ब्लॉक/,
+    ],
+    unblock: [
+      LATIN_WORD('unblock'),
+      /débloquer|debloquer/i,
+      /desbloqu|desbloque/i,
+      /sblocca/i,
+      /deblokkeren/i,
+      /odblokow|odblokuj/i,
+      /buka blokir/i,
+      /engeli kaldır/i,
+      /(?:deix(?:ar|a|e|es)|dej(?:ar|a|e))\s+de\s+bloqu/i,
+      /désactiver\s+le\s+blocage|lever\s+le\s+blocage/i,
+      /blockierung\s*(?:aufheben|beenden)|entsperren/i,
+      /取消屏蔽|取消拉黑|取消封锁|取消封鎖|已屏蔽|已拉黑/,
+      /ブロック解除|ブロックを解除/,
+      /차단 해제/,
+      /разблокировать/i,
+      /إلغاء الحظر/,
+      /เลิกบล็อก/,
+      /bỏ chặn/i,
+      /अनब्लॉक|ब्लॉक हटाएं/,
+    ],
+    confirm: [/^(?:block|屏蔽|拉黑|封锁|封鎖|ブロック|确认|確定|确定|confirm|ok)$/i],
+  };
+
+  /** 反义项：点反了比失败更糟（「静音」变「取消静音」）。 */
+  const ANTI_ACTION = { mute: 'unmute', unmute: 'mute', block: 'unblock', unblock: 'block' };
+
+  /** 与语言无关的 `data-testid`（拉黑/静音在部分构建里有）。 */
+  const MENU_ITEM_TESTID = {
+    mute: ['mute', 'muteLink'],
+    unmute: ['unmute', 'unmuteLink'],
+    block: ['block', 'blockLink'],
+    unblock: ['unblock', 'unblockLink'],
   };
 
   const RECOMMENDED_HEADING = /推荐|为你推荐|发现更多|你可能|Recommended|Discover more|You might like|Trending/i;
@@ -313,33 +414,259 @@
     return q1(article, SEL.caret);
   }
 
+  function labelMatches(patterns, label) {
+    if (!label || !Array.isArray(patterns)) return false;
+    return patterns.some((re) => re.test(label));
+  }
+
+  /**
+   * 需要「反义项优先」判定的动作 = 那些文案是**裸关键词**的动作。
+   * 因为「取消静音」里含「静音」、「Débloquer」里含「bloquer」——不先排除就会点反。
+   * 反义方向（unmute/unblock）不需要这一步：它的关键词本身就带否定前缀，
+   * 裸的「静音/屏蔽」根本不会命中它（若也做反义判定，反而会把「取消静音」判成「不是取消静音」）。
+   */
+  const STRICT_ANTI = new Set(['mute', 'block']);
+
+  /**
+   * 「否定词 + 词根」的**开放集**护栏（只对 mute/block 生效，且只在目标词已经命中之后才看）：
+   * `Deixar de silenciar`（pt-BR）、`Deixa de silenciar`（ca）、`Wyłącz wyciszenie`（pl）、
+   * `取消屏蔽`、`ミュート解除`……这类文案里都含目标词根，逐条列举永远会漏一种语言，
+   * 而漏一个就是「点反」。所以再加一条结构规则：文案里出现否定/撤销标记 → 判为反义，宁可不点。
+   * 注意不要放「tắt」（越南语「关」）这类既是静音正例一部分、又表示否定的词。
+   */
+  const NEGATION_MARKER = /(?:deix|dej(?:ar|a|e|en)|取消|消除|解除|해제|aufheben|wyłącz|wylacz|désactive|disable|\boff\b|riattiva|disattiva|убрать|отменить|разблок|разглуш|إلغاء|bỏ)/i;
+
+  /**
+   * 纯函数：这个菜单项文案就是目标动作吗？
+   * @param {'mute'|'unmute'|'block'|'unblock'} action
+   * @param {string} label
+   */
+  function matchMenuLabel(action, label) {
+    const wanted = MENU_LABEL[action];
+    if (!wanted) return false;
+    if (!labelMatches(wanted, label)) return false;
+    if (STRICT_ANTI.has(action)) {
+      const anti = MENU_LABEL[ANTI_ACTION[action]];
+      if (anti && labelMatches(anti, label)) return false;
+      if (NEGATION_MARKER.test(label)) return false;
+    }
+    return true;
+  }
+
+  function isConfirmLabel(label) {
+    return labelMatches(MENU_LABEL.confirm, label);
+  }
+
+  function menuItemLabel(el) {
+    const text = normalizeLabel(el?.textContent);
+    if (text) return text;
+    return normalizeLabel(el?.getAttribute?.('aria-label') ?? '');
+  }
+
+  function menuHasItems(el) {
+    try {
+      return Boolean(el?.querySelector?.('[role="menuitem"]'));
+    } catch {
+      return false;
+    }
+  }
+
+  /** 元素在页面上真的有盒子（`display:none` 的祖先会让 rect 归零）。 */
+  function isRendered(el) {
+    if (!el?.getBoundingClientRect) return false;
+    try {
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 || rect.height > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  function collectMenus() {
+    const out = [];
+    for (const sel of SEL.dropdown) {
+      try {
+        for (const el of document.querySelectorAll(sel)) if (!out.includes(el)) out.push(el);
+      } catch {
+        /* ignore */
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 当前「打开着」的菜单。
+   *
+   * 为什么不能取 `querySelector` 的第一个：X 会把关闭过的 `Dropdown` 节点留在 DOM 里（甚至同时存在多个），
+   * 第一个命中往往是残留节点——菜单里当然找不到刚点开的那一项，于是报 `menu_item_not_found`。
+   * 规则：只认**真的有盒子**的、最靠后（最新层）的菜单；全是不可见残留节点时返回 null
+   * （宁可让上层重试/失败，也不要去点一个残留节点上的旧菜单项）。
+   */
   function getOpenMenu() {
-    return q1(document, SEL.dropdown);
+    const withItems = collectMenus().filter(menuHasItems);
+    if (withItems.length === 0) return null;
+    const rendered = withItems.filter(isRendered);
+    return rendered.length ? rendered[rendered.length - 1] : null;
+  }
+
+  /**
+   * 点击之后**新出现**（或从不可见变成可见）的菜单。
+   *
+   * - 新出现的节点无条件可信（即使它被挂在被隐藏的子树里、暂时没有盒子）；
+   * - `before` 里就有的节点只有在「现在是可见的」才可信 —— 那说明它刚刚被打开；
+   * - 两者都没有 → null。绝不能退回不可见的残留节点：它的菜单项还绑着**上一个账号**的处理函数，
+   *   点下去可能作用在错误的账号上。
+   */
+  function pickFreshMenu(before = []) {
+    const withItems = collectMenus().filter(menuHasItems);
+    if (withItems.length === 0) return null;
+    const fresh = withItems.filter((el) => !before.includes(el));
+    const reopened = withItems.filter((el) => before.includes(el) && isRendered(el));
+    const pool = fresh.length ? fresh : reopened;
+    if (pool.length === 0) return null;
+    const rendered = pool.filter(isRendered);
+    const chosen = rendered.length ? rendered : pool;
+    return chosen[chosen.length - 1] ?? null;
+  }
+
+  function getMenuItems(menu) {
+    if (!menu?.querySelectorAll) return [];
+    try {
+      return [...menu.querySelectorAll('[role="menuitem"], button')];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 这一项是否**方向可疑**：`data-testid` 与文案指向相反动作时必须跳过。
+   *
+   * 背景（独立验证发现的缺口）：`data-testid="mute"` + 文案「取消静音 @x」这种自相矛盾的项，
+   * 旧实现第一步只看 testid 就直接返回 → 点下去等于执行 unmute（「点反」比失败更糟）。
+   * 现在：testid 是反义项、或文案是反义项 → 一律判为可疑并跳过；没有干净项就返回 null。
+   */
+  function isConflictingItem(el, action) {
+    const antiAction = ANTI_ACTION[action];
+    const antiIds = MENU_ITEM_TESTID[antiAction] ?? [];
+    const id = el.getAttribute('data-testid');
+    if (id && antiIds.includes(id)) return true;
+    const label = menuItemLabel(el);
+    if (label && matchMenuLabel(antiAction, label)) return true;
+    return false;
+  }
+
+  /**
+   * 文案里写的是**别人**的 handle 吗？
+   *
+   * X 的静音/拉黑菜单项文案带 handle（`静音 @someone`）。残留菜单节点上这类文案指向的是**上一个账号**，
+   * 点下去会作用于错误的账号——所以当我们知道目标 handle 时，只接受「写了目标 handle」或「完全没写 handle」的项。
+   */
+  function labelHandleMismatch(label, expectedHandle) {
+    const expected = String(expectedHandle ?? '').toLowerCase();
+    if (!expected) return false;
+    const mentioned = [...String(label ?? '').matchAll(/@([A-Za-z0-9_]{1,15})/g)].map((m) => m[1].toLowerCase());
+    if (mentioned.length === 0) return false;
+    return !mentioned.includes(expected);
+  }
+
+  function findMenuItemIn(scope, action, options = {}) {
+    if (!scope?.querySelectorAll) return null;
+    const wanted = MENU_ITEM_TESTID[action] ?? [];
+    const items = getMenuItems(scope).filter((el) => !isConflictingItem(el, action) && !labelHandleMismatch(menuItemLabel(el), options.handle));
+    // 1) testid 优先：与语言无关，最不容易漂移
+    const byTestId = items.find((el) => {
+      const id = el.getAttribute('data-testid');
+      return Boolean(id) && wanted.includes(id);
+    });
+    if (byTestId) return byTestId;
+    // 2) 文案：反义项已在上面被排除
+    return items.find((el) => matchMenuLabel(action, menuItemLabel(el))) ?? null;
   }
 
   /**
    * @param {'mute'|'block'} action
+   * @param {{menu?: Element|null, handle?: string}} [options]
    */
-  function findMenuItem(action) {
-    const menu = getOpenMenu();
-    if (!menu) return null;
-    const items = [...menu.querySelectorAll('[role="menuitem"], button')];
-
-    if (action === 'block') {
-      // 与语言无关：X 给拉黑菜单项带 data-testid="block"（unblock 是另一个 testid）
-      const byTestId = items.find((el) => el.getAttribute('data-testid') === 'block');
-      if (byTestId) return byTestId;
+  function findMenuItem(action, options = {}) {
+    const scopes = [];
+    if (options.menu?.isConnected) scopes.push(options.menu);
+    const open = getOpenMenu();
+    if (open && open !== options.menu) scopes.push(open);
+    for (const scope of scopes) {
+      const hit = findMenuItemIn(scope, action, options);
+      if (hit) return hit;
     }
+    // 兜底：只认页面上**有盒子**、方向与 handle 都不矛盾的 menuitem，绝不猜点菜单之外的按钮
+    const wanted = MENU_ITEM_TESTID[action] ?? [];
+    for (const el of document.querySelectorAll('[role="menuitem"]')) {
+      if (!isRendered(el) || isConflictingItem(el, action)) continue;
+      if (labelHandleMismatch(menuItemLabel(el), options.handle)) continue;
+      const id = el.getAttribute('data-testid');
+      if (id && wanted.includes(id)) return el;
+      if (matchMenuLabel(action, menuItemLabel(el))) return el;
+    }
+    return null;
+  }
 
-    const matcher = MENU_LABEL[action];
-    const anti = MENU_LABEL[action === 'mute' ? 'unmute' : 'unblock'];
-    if (!matcher) return null;
-    // 先排除反义项（Unmute/Unblock），再按文案匹配，避免点反。
-    return items.find((el) => {
-      const label = normalizeLabel(el.textContent);
-      if (!label || anti.test(label)) return false;
-      return matcher.test(label);
-    }) ?? null;
+  /** 诊断：失败时把「菜单里到底有什么」记下来（真站上只能靠这个定位选择器漂移）。 */
+  function describeMenu(menu = null) {
+    const scope = menu && menu.isConnected ? menu : getOpenMenu();
+    let items = scope ? getMenuItems(scope) : [...document.querySelectorAll('[role="menuitem"]')];
+    if (!scope) {
+      // 菜单已经关掉时，优先看仍然可见的 menuitem，避免把残留（display:none）菜单的内容当成诊断
+      const rendered = items.filter(isRendered);
+      if (rendered.length) items = rendered;
+    }
+    return items
+      .map((el) => {
+        const label = menuItemLabel(el).slice(0, 20);
+        const id = el.getAttribute('data-testid');
+        return label || id || '';
+      })
+      .filter(Boolean)
+      .slice(0, 12);
+  }
+
+  function menuDebug() {
+    const menus = collectMenus();
+    return { menus: menus.length, rendered: menus.filter(isRendered).length, items: describeMenu() };
+  }
+
+  /**
+   * 点击元素。默认走原生 `.click()`（React 的 onClick 收得到）。
+   * `pointer: true` 时补一整套 pointer/mouse 序列（少数构建把菜单挂在 mousedown/pointerdown 上），
+   * `native: false` 时**不**再补 `.click()`，避免「mousedown 打开 + click 关闭」的构建被自己关掉。
+   */
+  function clickElement(el, { pointer = false, native = true } = {}) {
+    if (!el) return false;
+    try {
+      el.focus?.({ preventScroll: true });
+    } catch {
+      /* ignore */
+    }
+    if (pointer) {
+      const base = { bubbles: true, cancelable: true, composed: true, view: globalThis };
+      const fire = (type, extra) => {
+        try {
+          const hasPointer = typeof globalThis.PointerEvent === 'function';
+          const Ctor = type.startsWith('pointer') && hasPointer ? globalThis.PointerEvent : globalThis.MouseEvent;
+          el.dispatchEvent(new Ctor(type, { ...base, ...extra }));
+        } catch {
+          /* ignore */
+        }
+      };
+      fire('pointerdown', { pointerId: 1, isPrimary: true, button: 0, buttons: 1 });
+      fire('mousedown', { button: 0, buttons: 1, detail: 1 });
+      fire('pointerup', { pointerId: 1, isPrimary: true, button: 0, buttons: 0 });
+      fire('mouseup', { button: 0, buttons: 0, detail: 1 });
+    }
+    if (!native) return true;
+    try {
+      el.click();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** 已存在的确认按钮集合：X 会复用 confirmationSheetConfirm 给别的弹窗，必须只点新出现的那个。 */
@@ -352,7 +679,7 @@
       for (const btn of document.querySelectorAll(sel)) {
         if (exclude.has(btn)) continue;
         const label = normalizeLabel(btn.textContent);
-        if (!label || MENU_LABEL.confirm.test(label)) return btn;
+        if (!label || isConfirmLabel(label)) return btn;
       }
     }
     return null;
@@ -379,6 +706,8 @@
   root.JevXSelectors = {
     SEL,
     MENU_LABEL,
+    MENU_ITEM_TESTID,
+    ANTI_ACTION,
     QUOTE_ANCESTOR,
     findTweets,
     getText,
@@ -397,7 +726,16 @@
     detectOwnHandle,
     getCaret,
     getOpenMenu,
+    pickFreshMenu,
     findMenuItem,
+    matchMenuLabel,
+    labelHandleMismatch,
+    isConfirmLabel,
+    describeMenu,
+    menuDebug,
+    clickElement,
+    isRendered,
+    collectMenus,
     findConfirmButton,
     snapshotConfirmButtons,
     normalizeLabel,

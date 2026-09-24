@@ -18,6 +18,7 @@ import { decide as gateDecide, describeReasons, planAccountAction, BAND } from '
 import { createFarmTracker, hasRepeatedLine } from './farm.js';
 import { mediaSuspicion } from './media.js';
 import { preScreen } from './prefilter.js';
+import { createRecentWindow, planSemanticCall, readSemanticsAnswers } from './semantics.js';
 import { RateWindow, hash32 } from './util.js';
 import { CATEGORY } from './classifier.js';
 
@@ -38,6 +39,7 @@ function dayKey(ms) {
 function emptyStats() {
   return {
     decisions: 0,
+    /** 所有 Jev 调用（过滤 + 预检 + 语义整理）：与 day.jev / 全局预算口径一致。 */
     jevCalls: 0,
     jevErrors: 0,
     schemaInvalid: 0,
@@ -50,6 +52,13 @@ function emptyStats() {
     triageHits: 0,
     triageEscalated: 0,
     farmHits: 0,
+    /**
+     * α / β 语义层（只影响展示载荷，不影响 band / accountAction）。
+     * - calls：实际发出的语义调用次数；candidateSets：其中带候选组的次数；
+     * - betaFolds / alphaHits：折叠与标记次数；skipped：预算耗尽等「本该调用但跳过」；
+     * - errors：语义调用抛错次数（过滤结果照常返回）。
+     */
+    semantics: { calls: 0, betaFolds: 0, alphaHits: 0, skipped: 0, errors: 0, candidateSets: 0 },
     categories: {},
     bands: { block: 0, hide: 0, review: 0, ignore: 0 },
     totalLatencyMs: 0,
@@ -135,12 +144,15 @@ export function createPipeline(deps) {
   const jevMinute = new RateWindow(60000);
   const triageMinute = new RateWindow(60000);
   const mediaMinute = new RateWindow(60000);
+  const semanticsMinute = new RateWindow(60000);
   const actionHour = new RateWindow(3600000);
-  let day = { key: dayKey(now()), jev: 0, actions: 0, triage: 0 };
+  /** 最近推文窗口：α/β 的候选与参考都从这里来（不是判定缓存）。 */
+  const semanticRecent = createRecentWindow({ maxSize: 60, now });
+  let day = { key: dayKey(now()), jev: 0, actions: 0, triage: 0, semantics: 0 };
 
   function rollDay(nowMs) {
     const key = dayKey(nowMs);
-    if (key !== day.key) day = { key, jev: 0, actions: 0, triage: 0 };
+    if (key !== day.key) day = { key, jev: 0, actions: 0, triage: 0, semantics: 0 };
   }
 
   /**
@@ -158,6 +170,7 @@ export function createPipeline(deps) {
         w: settings.whitelist,
         tr: settings.triage,
         f: settings.farm,
+        sem: settings.semantics,
         b: {
           jevMin: settings.budget.maxJevPerMinute,
           jevDay: settings.budget.maxJevPerDay,
@@ -198,6 +211,8 @@ export function createPipeline(deps) {
       mediaRemaining: settings.budget.maxMediaPerMinute - mediaMinute.count(nowMs),
       triageMinuteRemaining: settings.triage.maxPerMinute - triageMinute.count(nowMs),
       triageDayRemaining: settings.triage.maxPerDay - day.triage,
+      semanticsMinuteRemaining: (settings.semantics?.maxPerMinute ?? 0) - semanticsMinute.count(nowMs),
+      semanticsDayRemaining: (settings.semantics?.maxPerDay ?? 0) - day.semantics,
       actionRemaining: Math.min(
         settings.action.maxActionsPerHour - actionHour.count(nowMs),
         settings.action.maxActionsPerDay - day.actions,
@@ -248,11 +263,100 @@ export function createPipeline(deps) {
     return result;
   }
 
+  /**
+   * α / β 语义层：在**过滤判定完成之后**附加，永远不参与 band / accountAction 的计算（I1）。
+   *
+   * 一轮最多一次调用：本地先筛候选（0 候选 / 场景开关关掉 / 预算不允许都不发请求）。
+   * 任何失败都只记 `stats.semantics.errors` 并把 beta/alpha 留成 null —— 决策照常返回，
+   * 不允许把过滤结果带崩，也不允许把异常抛给调用方。
+   */
+  async function runSemanticsLayer(tweet, settings, observed = null) {
+    const semStats = stats.semantics;
+    const detail = { status: 'skipped', reason: null, candidates: 0, references: 0 };
+    const out = { beta: null, alpha: null, detail };
+    const sem = settings.semantics;
+    // 用窗口条目当 target：它带 band / farmKey / seq（同农场簇候选与「只折叠到更早的推文」都要用）。
+    const target = observed ?? tweet;
+    if (!sem?.enabled) {
+      detail.reason = 'semantics_disabled';
+      return out;
+    }
+    if (!jev) {
+      // 没有可用客户端：这是「本该判定但跳过」，计入 skipped（与预算耗尽同类）。
+      detail.reason = 'no_client';
+      semStats.skipped += 1;
+      return out;
+    }
+
+    semanticRecent.configure({ maxSize: sem.beta?.windowSize });
+    const plan = planSemanticCall({
+      target,
+      recent: semanticRecent.list(),
+      settings,
+      selfSeq: observed?.seq ?? Number.POSITIVE_INFINITY,
+    });
+    detail.candidates = plan.candidateCount;
+    detail.references = plan.referenceCount;
+    if (!plan.call) {
+      // 0 候选 / 开关关闭：正常跳过，不占预算也不算「超预算跳过」（UI 的 skipped 标签是「超预算」）。
+      detail.reason = plan.reason ?? 'no_candidates';
+      return out;
+    }
+
+    rollDay(now());
+    const minuteRemaining = (sem.maxPerMinute ?? 0) - semanticsMinute.count(now());
+    const dayRemaining = (sem.maxPerDay ?? 0) - day.semantics;
+    // 语义调用同样计入**全局 Jev 预算**（否则总花费会突破用户设的上限），
+    // 并且必须给过滤留出保底额度：全局剩余 ≤ reserveForFiltering 时语义层不再调用，
+    // 保证「类判定 / 预检」永远有额度可用（语义整理只是锦上添花）。
+    const jevMinuteRemaining = settings.budget.maxJevPerMinute - jevMinute.count(now());
+    const jevDayRemaining = settings.budget.maxJevPerDay - day.jev;
+    const reserve = sem.reserveForFiltering ?? 0;
+    if (minuteRemaining <= 0 || dayRemaining <= 0 || jevMinuteRemaining <= 0 || jevDayRemaining <= reserve) {
+      detail.reason = 'budget_exhausted';
+      semStats.skipped += 1;
+      return out;
+    }
+
+    semanticsMinute.tryTake(now(), sem.maxPerMinute);
+    jevMinute.tryTake(now(), settings.budget.maxJevPerMinute);
+    day.semantics += 1;
+    day.jev += 1;
+    // 语义调用也要计入「模型调用」总数（弹窗/设置页读的是 jevCalls）：
+    // 否则会出现「模型调用 5 · 语义调用 3」这种自相矛盾的数字。
+    stats.jevCalls += 1;
+    semStats.calls += 1;
+    if (plan.candidateCount > 0) semStats.candidateSets += 1;
+    detail.status = 'ok';
+    try {
+      const result = await jev.systemOne({ state: plan.state, questions: plan.questions });
+      const parsed = readSemanticsAnswers(result?.answers, { plan, target, settings });
+      out.beta = parsed.beta;
+      out.alpha = parsed.alpha;
+      if (parsed.beta) semStats.betaFolds += 1;
+      if (parsed.alpha) semStats.alphaHits += 1;
+    } catch (error) {
+      // 语义层失败不影响过滤结果：只计数，beta/alpha 保持 null。
+      semStats.errors += 1;
+      detail.status = 'error';
+      detail.reason = `model_error:${String(error?.message ?? error)}`;
+    }
+    return out;
+  }
+
   async function runDecide(tweet) {
     const started = now();
     const settings = getSettings();
     stats.decisions += 1;
     stats.lastDecisionAt = started;
+
+    // 「先观察、后判定」：在任何 await 之前就把这条推文放进最近窗口。
+    // 浏览器里同一屏的多篇文章是**并发**判定的（inspectArticle 并发发消息，SW 在 await 处交错），
+    // 如果等模型往返之后再记录，后一条规划语义时就看不到前一条 → β/α 在真实时间线上大面积失效
+    // （真实 Chrome 端到端抓到的缺陷：1102 → no_candidates）。
+    // 口径：窗口是「观察到的推文」，不是「已完成判定的推文」；被 prefilter 跳过的条目也在里面
+    // （它们本来就放行，band 回填为 ignore）。判定完成后回填 band/farmKey 供 α 护栏使用。
+    const observed = semanticRecent.push({ ...tweet, farmKey: null });
 
     const finish = (decision) => {
       const out = {
@@ -282,14 +386,38 @@ export function createPipeline(deps) {
     };
 
     if (!settings.enabled) {
-      return finish({ band: BAND.ignore, reasons: [], source: 'disabled', skip: 'disabled', detail: {}, accountAction: null });
+      if (observed) observed.band = BAND.ignore;
+      return finish({
+        band: BAND.ignore,
+        reasons: [],
+        source: 'disabled',
+        skip: 'disabled',
+        // 冻结接口：语义层未运行也保持 beta/alpha = null，消费方不用区分 undefined。
+        beta: null,
+        alpha: null,
+        detail: { semantics: { status: 'skipped', reason: 'semantics_disabled', candidates: 0, references: 0 } },
+        accountAction: null,
+      });
     }
 
     const pre = preScreen(tweet, settings);
     stats.prefilters += 1;
     if (pre.skip) {
       stats.skips += 1;
-      return finish({ band: BAND.ignore, reasons: [], source: 'local', skip: pre.skip, detail: { prefilterScore: pre.score }, accountAction: null });
+      if (observed) observed.band = BAND.ignore;
+      return finish({
+        band: BAND.ignore,
+        reasons: [],
+        source: 'local',
+        skip: pre.skip,
+        beta: null,
+        alpha: null,
+        detail: {
+          prefilterScore: pre.score,
+          semantics: { status: 'skipped', reason: 'prefilter_skipped', candidates: 0, references: 0 },
+        },
+        accountAction: null,
+      });
     }
 
     // 文案农场：同一段无实质内容的话被多个账号短时间复制（真站：回复区里 4 个账号刷同一句）
@@ -304,6 +432,8 @@ export function createPipeline(deps) {
     // 同一条推文里重复同一句话（Shantel Just 那种「同一句写两遍」）也是刷屏特征
     const repeatInPost = settings.categories.farm?.enabled !== false && hasRepeatedLine(tweet?.text);
     if (farm.hit) stats.farmHits += 1;
+    // 农场簇键在语义规划（过滤判定之后）之前回填：`pickBetaCandidates` 的「同农场簇」候选要用它。
+    if (observed) observed.farmKey = farm.key ?? null;
     scheduleRuntimeSave();
     if (repeatInPost && !farm.hit) stats.repeatInPost = (stats.repeatInPost ?? 0) + 1;
 
@@ -448,6 +578,10 @@ export function createPipeline(deps) {
       scheduleRuntimeSave();
     }
 
+    // α/β 语义层：在过滤判定**完成之后**附加，只做展示载荷，绝不参与 band / 动作（I1）。
+    // 窗口读取发生在判定之后，但入窗在 runDecide 最前面（并发下的可见性靠这个）。
+    const semantics = await runSemanticsLayer(tweet, settings, observed);
+
     const reasons = [...gated.reasons];
     if (degraded) reasons.push(degraded);
     if (media.mediaSuspicious && !gated.reasons.includes('media_skin_dominated')) reasons.push(...media.mediaReasons);
@@ -457,6 +591,9 @@ export function createPipeline(deps) {
       reasons: [...new Set(reasons)],
       source,
       skip: null,
+      // 冻结接口：不适用时为 null；它们只影响展示（折叠 / 标记），不改 band 与 accountAction。
+      beta: semantics.beta,
+      alpha: semantics.alpha,
       detail: {
         ...gated.detail,
         media: media.mediaResults,
@@ -464,6 +601,7 @@ export function createPipeline(deps) {
         degraded,
         triage,
         junkProbability,
+        semantics: semantics.detail,
         farm: { hit: farm.hit, accounts: farm.accounts, key: farm.key, similarity: farm.similarity, repeatInPost },
       },
       farm: farm.hit
@@ -480,6 +618,10 @@ export function createPipeline(deps) {
       },
       hideByScope: true,
     });
+
+    // 判定完成 → 回填窗口条目的 band：α 的参考集合据此排除 hide / block / review
+    // （已隐藏的垃圾评论不该被当成「评论区多数观点」）。
+    if (observed) observed.band = decision.band;
 
     if (auditor) {
       auditor
@@ -534,7 +676,14 @@ export function createPipeline(deps) {
       return promise;
     },
     stats() {
-      return { ...stats, bands: { ...stats.bands }, categories: { ...stats.categories }, cacheSize: cache.size, inflight: inflight.size };
+      return {
+        ...stats,
+        bands: { ...stats.bands },
+        categories: { ...stats.categories },
+        semantics: { ...stats.semantics },
+        cacheSize: cache.size,
+        inflight: inflight.size,
+      };
     },
     clearCache() {
       cache.clear();

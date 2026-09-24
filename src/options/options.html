@@ -79,6 +79,58 @@
       </section>
 
       <section>
+        <h2>1.6 α / β 语义信息（折叠重复 · 标记特殊）</h2>
+        <p class="sub">
+          <strong>β（重复 / 类似 / 语义相同的信息）</strong>：同一批推文里说法几乎一样的，
+          <strong>折叠成只显示一次</strong>，其余收进「重复」里 —— 只是折叠展示，
+          <strong>不隐藏、不动作</strong>。<br />
+          <strong>α（特殊信息）</strong>：与评论区多数观点明显不同的推文，
+          <strong>只标记、不隐藏</strong>，照样正常显示，只是加一个「和主流不一样」的提示。
+        </p>
+        <p class="sub">
+          两者都<strong>不影响隐藏与账号动作</strong>：隐藏 / 静音 / 拉黑仍然只由「过滤类别」与
+          「置信度闸门」加下面的动作开关决定；α / β 只是在已放行的推文上多做一层整理与提示。
+          关掉总开关就等于回到纯类别过滤。
+        </p>
+        <div class="grid">
+          <label class="check"><input type="checkbox" data-path="semantics.enabled" checked /><span>启用语义整理（总开关）</span></label>
+          <label class="check"><input type="checkbox" data-path="semantics.beta.enabled" checked /><span>β：折叠重复 / 类似信息<span class="note">（只显示一次，不隐藏）</span></span></label>
+          <label>
+            <span>β 相似度阈值 ≥（0–1，越高越保守）</span>
+            <input type="number" data-path="semantics.beta.threshold" value="0.7" min="0" max="1" step="0.05" />
+          </label>
+          <label>
+            <span>β 一轮最多比较几条</span>
+            <input type="number" data-path="semantics.beta.maxCandidates" value="6" min="2" max="30" step="1" />
+          </label>
+          <label class="check"><input type="checkbox" data-path="semantics.beta.foldInFeed" checked /><span>在时间线里也折叠重复信息（β）</span></label>
+          <label class="check"><input type="checkbox" data-path="semantics.beta.foldInReplies" checked /><span>在回复区里折叠重复信息（β）</span></label>
+          <label class="check"><input type="checkbox" data-path="semantics.alpha.enabled" checked /><span>α：标记特殊观点<span class="note">（只标记，不隐藏）</span></span></label>
+          <label class="check"><input type="checkbox" data-path="semantics.alpha.onlyInReplies" checked /><span>α 只在回复区生效<span class="note">（时间线上不标）</span></span></label>
+          <label>
+            <span>α「与多数不同」阈值 ≥（0–1）</span>
+            <input type="number" data-path="semantics.alpha.threshold" value="0.7" min="0" max="1" step="0.05" />
+          </label>
+          <label>
+            <span>α 至少参考几条评论</span>
+            <input type="number" data-path="semantics.alpha.minReferences" value="3" min="1" max="30" step="1" />
+          </label>
+          <label>
+            <span>语义整理每分钟上限</span>
+            <input type="number" data-path="semantics.maxPerMinute" value="10" min="0" max="600" step="1" />
+          </label>
+          <label>
+            <span>语义整理每天上限</span>
+            <input type="number" data-path="semantics.maxPerDay" value="300" min="0" max="10000" step="10" />
+          </label>
+        </div>
+        <p class="note">
+          语义预算超限时只是「跳过整理」（不折叠、也不标记），<strong>不影响</strong>类别判定、
+          隐藏与账号动作。
+        </p>
+      </section>
+
+      <section>
         <h2>2. 置信度闸门</h2>
         <p class="sub">
           账号动作需要同时满足四条：<strong>类别本身允许动账号</strong>（色情/诈骗/广告导流）、

@@ -193,7 +193,25 @@ User-Agent: jev-systemone/0.1.1   ← 浏览器是受限请求头，会被 Chrom
 - **确认框硬化**：点击前快照已存在的 `confirmationSheetConfirm`，只点新出现且文案匹配的那个
   （X 会把这个 testid 复用到别的弹窗）。
 - **语言无关优先**：拉黑用 `[data-testid="block"]`；静音没有 testid，只能按文案匹配，且先排除
-  `Unmute/Unblock/取消静音` 反义项。
+  `Unmute/Unblock/取消静音` 反义项（见下面「菜单自动化的四个硬约束」）。
+- **菜单自动化的四个硬约束**（真站 `自动动作失败：menu_item_not_found:mute` 逼出来的）：
+  1. **触发按钮必须有盒子**。隐藏手法是把推文子节点 `display:none`，而 `⋯` 按钮也在其中 ——
+     它的 `getBoundingClientRect()` 变成 0×0，X 的浮层拿不到锚点就不渲染菜单。
+     所以动作期间给 `⋯`→`article` 的祖先链补 `display:block` + `visibility:hidden`，
+     按钮本身 1px 离屏 `position:fixed`，点完逐条还原。用内联 `!important` 而不是改 CSS 类/变量：
+     内联 important 能压过样式表 important，还原时按属性快照逐条恢复，不污染文档流。
+     （端到端断言 `window.__menuCalls` 里每次点击的按钮 rect > 0，见 `docs/VERIFICATION.md` 场景 F。）
+  2. **菜单要认「新的」**。X 会把关闭过的 `Dropdown` 节点留在 DOM 里（甚至多个），
+     `querySelector` 的第一个常常是残留节点 —— 它里面的菜单项还绑着**上一个账号**的处理函数。
+     规则：新出现的节点无条件可信；快照里就有的节点必须**现在可见**才可信；两者都不满足就算
+     「菜单没打开」并重试/失败，绝不退回不可见残留。
+  3. **方向冲突一律跳过**：`data-testid` 与文案指向相反动作（`testid="mute"` + 文案「取消静音」）时，
+     两个方向都不选 —— 无法判断点下去执行哪个动作，失败比 50% 点反好。
+  4. **认 handle**：文案里写了别的 `@handle` 的项跳过（用户手动开着别的推文的菜单、或残留菜单时，
+     这是最后一道「静音错人」防线）；文案里完全没写 handle 的项照常接受。
+  另外：文案匹配**不锚定行首**（图标、双向控制符会让 `^静音` 失配），并用「否定词 + 词根」结构
+  兜住没逐条列进表的语言（`Deixar de silenciar`、`Wyłącz wyciszenie`、`Deixa de silenciar`…）。
+  失败时把「菜单里实际有哪些项」写进审计事件与判定条 `title`，让人能自己定位选择器漂移。
 - **纯图形态**：`mediaBlocked && shortWithMedia` → `review`（隐藏成待确认，不动作）。
   这是真实模型验证逼出来的：Jev 只能读文本，纯图片黄推的文案概率必然很低（实测 0.21），
   所以「只发图/纯链接形态 + 图片极可能裸露」是唯一可用证据；`mediaBlockedRatio` 默认 0.70，

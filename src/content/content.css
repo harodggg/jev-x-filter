@@ -52,7 +52,8 @@ body[data-jevx-dark='1'] article[data-jevx-hidden='1'] .jevx-bar {
   opacity: 0.9;
 }
 
-.jevx-bar button {
+.jevx-bar button,
+.jevx-beta-bar button {
   font: inherit;
   cursor: pointer;
   border: 1px solid rgba(83, 100, 113, 0.45);
@@ -62,7 +63,8 @@ body[data-jevx-dark='1'] article[data-jevx-hidden='1'] .jevx-bar {
   padding: 2px 10px;
 }
 
-.jevx-bar button:hover {
+.jevx-bar button:hover,
+.jevx-beta-bar button:hover {
   background: rgba(15, 20, 25, 0.06);
 }
 
@@ -79,4 +81,70 @@ body[data-jevx-dark='1'] article[data-jevx-hidden='1'] .jevx-bar {
 .jevx-bar .jevx-score {
   font-variant-numeric: tabular-nums;
   opacity: 0.75;
+}
+
+/* β 折叠（重复/类似/语义相同只显示一次）：
+   与隐藏一样保留 <article>、只藏它的子节点，条本身仍在文档流里；
+   展开后（data-jevx-beta-expanded='1'）子节点全部恢复，条降级成一条「收起」控制条。
+   属性缺失时这两条规则不命中 —— 行为与引入 β 之前完全一致。 */
+article[data-jevx-beta='1']:not([data-jevx-beta-expanded='1']) {
+  min-height: 0 !important;
+  border-bottom: 1px solid rgba(239, 243, 244, 0.12) !important;
+  padding: 0 !important;
+}
+
+article[data-jevx-beta='1']:not([data-jevx-beta-expanded='1']) > *:not(.jevx-beta-bar) {
+  display: none !important;
+}
+
+article[data-jevx-beta='1'] > .jevx-beta-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  color: #536471;
+  background: rgba(29, 155, 240, 0.07);
+  border-left: 3px solid rgba(29, 155, 240, 0.5);
+}
+
+article[data-jevx-beta='1'] > .jevx-beta-bar--expanded {
+  background: rgba(29, 155, 240, 0.04);
+  border-left-color: rgba(29, 155, 240, 0.28);
+}
+
+.jevx-beta-bar .jevx-beta-text {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+html[data-jevx-theme='dark'] article[data-jevx-beta='1'] > .jevx-beta-bar,
+body[data-jevx-dark='1'] article[data-jevx-beta='1'] > .jevx-beta-bar {
+  color: #8b98a5;
+}
+
+/* α 徽标（与评论区多数观点不同）：article 内最前面的独立一行，
+   随文档流、宽度自适应、不覆盖正文也不拦截推文的点击。
+   中性 slate/蓝配色，**不用**警告色（红/橙/感叹号）。 */
+article[data-jevx-alpha='1'] > .jevx-alpha-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: calc(100% - 28px);
+  margin: 6px 14px 0;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(47, 95, 158, 0.35);
+  background: rgba(47, 95, 158, 0.1);
+  color: #2f5f9e;
+  font: 12px/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  cursor: help;
+}
+
+html[data-jevx-theme='dark'] article[data-jevx-alpha='1'] > .jevx-alpha-badge,
+body[data-jevx-dark='1'] article[data-jevx-alpha='1'] > .jevx-alpha-badge {
+  border-color: rgba(157, 184, 221, 0.4);
+  background: rgba(157, 184, 221, 0.12);
+  color: #9db8dd;
 }

@@ -35,6 +35,18 @@ const settings = normalizeSettings({
   // 只做「判定」，账号动作全部停在演练档，绝不碰任何账号。
   action: { dryRun: true, autoMute: true, autoBlock: false },
   scope: { onlyVisible: false },
+  // 真机验证会被 30+ 条样本连续调用，而预检/判定/语义层**共用同一个每分钟 Jev 额度**：
+  // 不放大就会出现「后面的 α/β 样本因为前面把分钟额度打满而整层跳过」——那不是模型的问题。
+  // 数值必须落在 settings.js 的夹紧区间内（≤600/分钟），否则会被夹回去。
+  budget: { maxJevPerMinute: 600, maxJevPerDay: 5000 },
+  triage: { enabled: true, sampleRate: 1, maxPerMinute: 600, maxPerDay: 5000 },
+  semantics: {
+    enabled: true,
+    beta: { enabled: true, threshold: 0.7, maxCandidates: 6, windowSize: 60, foldInFeed: true, foldInReplies: true },
+    alpha: { enabled: true, onlyInReplies: true, threshold: 0.7, minReferences: 3, maxReferences: 12 },
+    maxPerMinute: 600,
+    maxPerDay: 5000,
+  },
 });
 const api = resolveApi(settings);
 
@@ -95,6 +107,8 @@ const pipeline = createPipeline({
  *   expectBlock  —— 期望进入 block 档（可动账号；未达只告警）
  *   expectHideOnly —— 期望隐藏但**绝不**进入 block 档（误进 block 记硬失败）
  *   knownGap    —— 已知残差：只记录、不计入成败（例如单条孤立样本模型自己判「普通」）
+ *   expectBetaFolded —— 期望被判为 β（β.folded === true）
+ *   expectAlphaHit   —— 期望被判为 α（alpha.hit === true）
  */
 const SAMPLES = [
   {
@@ -243,6 +257,38 @@ const SAMPLES = [
     expect: 'knownGap',
   },
   {
+    name: 'β 重复·代表条',
+    // 两条是**同一件事的两种写法**（改了「在地铁上→坐地铁时」），本地近似度 0.68：
+    // 高于 β 候选门槛 0.45、低于农场聚类门槛 0.8 —— 正好只该由 β 折叠，而不是被当成农场刷屏。
+    tweet: { id: 'b1', handle: 'commuter_a', text: '今天在地铁上看到有人给老人让座，感觉挺暖的', media: [], context: 'timeline' },
+    expect: 'mustNotHide',
+  },
+  {
+    name: 'β 重复·语义相同（改写）',
+    tweet: { id: 'b2', handle: 'commuter_b', text: '今天坐地铁时看到有人给老人让座，感觉挺暖的', media: [], context: 'timeline' },
+    expect: 'expectBetaFolded',
+  },
+  {
+    name: 'α 线程·多数#1',
+    tweet: { id: 'a1', handle: 'reply_a', text: '这个政策我支持，方向是对的', media: [], context: 'reply', threadId: '1912000000000000001' },
+    expect: 'mustNotHide',
+  },
+  {
+    name: 'α 线程·多数#2',
+    tweet: { id: 'a2', handle: 'reply_b', text: '支持，方向没问题', media: [], context: 'reply', threadId: '1912000000000000001' },
+    expect: 'mustNotHide',
+  },
+  {
+    name: 'α 线程·多数#3',
+    tweet: { id: 'a3', handle: 'reply_c', text: '我也支持这个方向', media: [], context: 'reply', threadId: '1912000000000000001' },
+    expect: 'mustNotHide',
+  },
+  {
+    name: 'α 线程·少数派观点',
+    tweet: { id: 'a4', handle: 'reply_d', text: '我不同意，公开数据其实是反过来的，去年同类政策让成本涨了三成', media: [], context: 'reply', threadId: '1912000000000000001' },
+    expect: 'expectAlphaHit',
+  },
+  {
     name: '诈骗·荐股（内幕/稳赚）',
     tweet: { id: 's18', handle: 'stockguru88', text: '内幕消息：跟随老师操作，月入十万，稳赚不赔，加V领取建仓表', media: [], context: 'timeline' },
     expect: 'expectBlock',
@@ -315,7 +361,7 @@ async function main() {
   console.log(`网关：${api.preset} · ${api.baseURL}${api.path} · 模型 ${api.model}`);
   console.log('跑的是扩展真正的流水线（含模型先行预检）；账号动作停在演练档，Key 来自环境变量。\n');
   console.log(
-    `${pad('样本', 26)}${pad('档位', 8)}${pad('来源', 6)}${pad('色情', 6)}${pad('引流', 6)}${pad('欺骗', 6)}${pad('junk', 6)}${pad('类别', 22)}${pad('置信度', 8)}${pad('延迟', 8)}说明`,
+    `${pad('样本', 26)}${pad('档位', 8)}${pad('来源', 6)}${pad('色情', 6)}${pad('引流', 6)}${pad('欺骗', 6)}${pad('junk', 6)}${pad('类别', 18)}${pad('α', 7)}${pad('β', 7)}${pad('延迟', 8)}说明`,
   );
 
   let hardFail = 0;
@@ -353,6 +399,8 @@ async function main() {
     }
 
     const hidden = decision.band !== 'ignore';
+    const betaFolded = decision.beta?.folded === true;
+    const alphaHit = decision.alpha?.hit === true;
     const violated =
       (sample.expect === 'mustNotHide' && hidden) ||
       (sample.expect === 'mustNotBlock' && decision.band === 'block') ||
@@ -360,7 +408,9 @@ async function main() {
     const infoOnly = sample.expect === 'knownGap';
     const missed = !infoOnly && ((sample.expect === 'expectHidden' && !hidden) ||
       (sample.expect === 'expectBlock' && decision.band !== 'block') ||
-      (sample.expect === 'expectHideOnly' && !hidden));
+      (sample.expect === 'expectHideOnly' && !hidden) ||
+      (sample.expect === 'expectBetaFolded' && !betaFolded) ||
+      (sample.expect === 'expectAlphaHit' && !alphaHit));
     if (violated) hardFail += 1;
     if (missed) softMiss += 1;
 
@@ -372,8 +422,9 @@ async function main() {
         : '无动作';
     console.log(
       `${pad(sample.name, 24)}${pad(decision.band, 8)}${pad(SOURCE_LABEL[decision.source] ?? decision.source, 6)}` +
-        `${pad(fmt(adult), 6)}${pad(fmt(solicitation), 6)}${pad(fmt(junk), 6)}${pad(category, 22)}${pad(fmt(confidence), 8)}${pad(`${latency}ms`, 8)}` +
-        `[${tier} → ${decision.reasons.join(',') || '无'}；${would}]${mark}`,
+        `${pad(fmt(adult), 6)}${pad(fmt(solicitation), 6)}${pad(fmt(deceptive), 6)}${pad(fmt(junk), 6)}` +
+        `${pad(category, 18)}${pad(fmt(decision.alpha?.score), 7)}${pad(fmt(decision.beta?.similarity), 7)}` +
+        `${pad(`${latency}ms`, 8)}[${tier} → ${decision.reasons.join(',') || '无'}；${would}]${mark}`,
     );
     if (decision.farm?.hit) {
       console.log(`${pad('', 24)}  文案农场命中：同文案已有 ${decision.farm.accounts} 个不同账号（UI 会把更早的那几条一并隐藏）`);
@@ -388,6 +439,29 @@ async function main() {
   console.log(
     `调用统计：共 ${stats.jevCalls} 次（预检 ${stats.triageProbes} · 预检命中 ${stats.triageHits} · 升级五问 ${stats.triageEscalated}）` +
       `，token 输入 ${tokensIn} / 输出 ${tokensOut}`,
+  );
+  // 按调用类型拆 token：α/β 的成本必须能被单独看到（AC20：语义层每次调用花了多少）。
+  const kindOf = (request) => {
+    const ids = Object.keys(request?.questions ?? {});
+    if (ids.length === 1 && ids[0] === 'junk') return 'probe';
+    if (ids.includes('adult') && ids.includes('category')) return 'filter';
+    return 'semantics';
+  };
+  const split = { probe: { n: 0, in: 0, out: 0 }, filter: { n: 0, in: 0, out: 0 }, semantics: { n: 0, in: 0, out: 0 } };
+  for (const call of calls) {
+    const bucket = split[kindOf(call.request)];
+    bucket.n += 1;
+    bucket.in += call.response?.usage?.input_tokens ?? 0;
+    bucket.out += call.response?.usage?.output_tokens ?? 0;
+  }
+  console.log(
+    `按类型拆 token：预检 ${split.probe.n} 次（输入 ${split.probe.in} / 输出 ${split.probe.out}）· ` +
+      `五问 ${split.filter.n} 次（输入 ${split.filter.in} / 输出 ${split.filter.out}）· ` +
+      `${'α/β 语义'} ${split.semantics.n} 次（输入 ${split.semantics.in} / 输出 ${split.semantics.out}` +
+      `${split.semantics.n ? `，单次约 ${Math.round(split.semantics.in / split.semantics.n)} 输入 token` : ''}）`,
+  );
+  console.log(
+    `语义层：β 折叠 ${stats.semantics?.betaFolds ?? 0} · α 标记 ${stats.semantics?.alphaHits ?? 0} · 调用 ${stats.semantics?.calls ?? 0} · 跳过 ${stats.semantics?.skipped ?? 0} · 失败 ${stats.semantics?.errors ?? 0}`,
   );
   console.log(
     `档位分布：${Object.entries(stats.bands).map(([k, v]) => `${k}=${v}`).join(' ')}；缓存命中 ${stats.cacheHits}；本地跳过 ${stats.skips}`,

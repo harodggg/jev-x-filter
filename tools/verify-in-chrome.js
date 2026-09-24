@@ -41,17 +41,48 @@ const NEWS = 'ORDINARY 警方通报：专项行动打击约炮平台与色情网
 const WEAK_IMAGE = '极品模特 真人福利 在线看';
 const FARM_TEXT = '应该没人比我玩的开了吧🤣💖我福不黑不信你看';
 
-function article(id, handle, text, { photo = false, displayName = null } = {}) {
+function article(id, handle, text, { photo = false, displayName = null, replyTo = null } = {}) {
   return `
   <div data-testid="cellInnerDiv">
-    <article data-testid="tweet" data-h="${handle}" id="tweet-${id}">
+    <!-- data-jevx-id：夹具用短 id（111/1101…），而真站的雪花 id 是 18–19 位，
+         getTweetId 的 status id 正则命中不了 —— 这个属性就是给夹具/测试用的身份兜底。
+         没有它的话 tweet.id 全是 null，β（需要 duplicateOf 锚点）在端到端里会被整条跳过。 -->
+    <article data-testid="tweet" data-h="${handle}" data-jevx-id="${id}" id="tweet-${id}">
       <div data-testid="User-Name"><a href="/${handle}">${displayName ?? `${handle} 官方`}</a><a href="/${handle}">@${handle}</a></div>
+      ${replyTo ? `<a href="/${replyTo}">Replying to @${replyTo}</a>` : ''}
       <a href="/${handle}/status/${id}"><time datetime="2026-01-01T00:00:00.000Z">1h</time></a>
       ${photo ? `<div data-testid="tweetPhoto"><img src="${BASE}/skin.png" alt=""></div>` : ''}
       <div data-testid="tweetText">${text}</div>
-      <button data-testid="caret" aria-label="More" onclick="toggleMenu('${handle}')">⋯</button>
+      <button data-testid="caret" aria-label="More" onclick="toggleMenu('${handle}', this)">⋯</button>
     </article>
   </div>`;
+}
+
+/**
+ * 场景 F 夹具：只放三条「只差菜单行为」的账号，专门考察菜单自动化。
+ * 三条文案互不相同（避免被农场聚合），但都命中 mock 的 block 档（`/onlyfans|主页联系/`）。
+ */
+function menuTrapHtml() {
+  return `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>菜单自动化夹具</title>
+<style>body{font:14px/1.5 sans-serif;margin:0}article{display:block;padding:12px;border-bottom:1px solid #ddd}
+[role=menuitem]{padding:8px;cursor:pointer}
+[data-testid=Dropdown]{position:fixed;top:10px;right:10px;background:#fff;border:1px solid #ccc;z-index:9}
+</style></head>
+<body>
+<!-- 陷阱：页面加载时就挂着一个**残留菜单**（真站上 X 会把关闭过的 Dropdown 节点留在 DOM 里）。
+     它里面的静音项指向另一个账号 —— 谁要是取「文档里第一个 Dropdown」，就会静音错人。 -->
+<div data-testid="Dropdown" data-stale="1" role="menu" style="display:none">
+  <div role="menuitem" onclick="window.__actions.push({kind:'mute',handle:'stale_ghost',stale:true})">Mute @stale_ghost</div>
+  <div role="menuitem" onclick="window.__actions.push({kind:'block',handle:'stale_ghost',stale:true})" data-testid="block">Block @stale_ghost</div>
+</div>
+<div data-testid="primaryColumn">
+  ${article('9001', 'spammer_es', 'OnlyFans 主页联系 付费频道 西语菜单变体')}
+  ${article('9002', 'spammer_tid', 'OnlyFans 主页联系 付费频道 testid 菜单变体')}
+  ${article('9003', 'spammer_none', 'OnlyFans 主页联系 付费频道 菜单缺少静音项')}
+</div>
+<script>${fixtureScript()}</script>
+</body></html>`;
 }
 
 function pageHtml() {
@@ -62,6 +93,13 @@ img{width:80px;height:80px}[role=menuitem]{padding:8px;cursor:pointer}
 [data-testid=Dropdown]{position:fixed;top:10px;right:10px;background:#fff;border:1px solid #ccc;z-index:9}
 </style></head>
 <body>
+<!-- 陷阱 0：页面加载时 DOM 里就有一个**残留的关闭菜单**（真站上 X 会把 Dropdown 节点留在 DOM 里）。
+     它的静音项指向 stale_ghost —— 实现只要取「文档里第一个 Dropdown」就会静音错人。 -->
+<div data-testid="Dropdown" data-stale="1" role="menu" style="display:none">
+  <div role="menuitem" onclick="window.__actions.push({kind:'mute',handle:'stale_ghost',stale:true})">Mute @stale_ghost</div>
+  <div role="menuitem" onclick="window.__actions.push({kind:'unmute',handle:'stale_ghost',stale:true})">Unmute @stale_ghost</div>
+  <div role="menuitem" onclick="window.__actions.push({kind:'block',handle:'stale_ghost',stale:true})" data-testid="block">Block @stale_ghost</div>
+</div>
 <div data-testid="primaryColumn">
   <h1>时间线</h1>
   <!-- 陷阱 1：页面里早就挂着一个文案命中「确认拉黑」的确认按钮（X 复用同一个 testid），
@@ -78,6 +116,9 @@ img{width:80px;height:80px}[role=menuitem]{padding:8px;cursor:pointer}
   <!-- 真站漏检样本 2：正文与显示名都没有任何关键词（乱码账号名 + 性暗示自夸），
        只能靠预检（模型先行）捞出来 -->
   ${article('888', 'yrmyzhcxvlkzpu', '比我好看的没我骚🔧👏但我承认你更好看', { displayName: 'yrmyzh cxvlu' })}
+  <!-- β（贝塔信息）：语义相同、措辞不同 → 第二条折叠只显示一次 -->
+  ${article('1101', 'commuter_a', 'BETAPAIR：今天在地铁上看到有人给老人让座，感觉挺暖的')}
+  ${article('1102', 'commuter_b', 'BETAPAIR：今天坐地铁，有人主动给老人让座，感觉挺暖的')}
   <!-- 近似文案农场：两个账号发同一句、各自插入不同垃圾字符；其中一条还把同一句写了两遍 -->
   ${article('1003', 'MaribelTebhz', '比我好看的没我骚蝎🐾比我骚的没我好看', { displayName: 'Maribel Tebow' })}
   ${article('1004', 'ShanteUusakr', '比我好看的没我骚🐾💩比我骚的没我好看。比我好看的没我骚🐾💩比我骚的没我好看', { displayName: 'Shantel Just' })}
@@ -91,9 +132,29 @@ img{width:80px;height:80px}[role=menuitem]{padding:8px;cursor:pointer}
   ${article('902', 'TinaMysersyro', FARM_TEXT, { displayName: '夜蓉🌸' })}
   ${article('903', 'TimothyAndjqqx', FARM_TEXT, { displayName: '迎晴🌸' })}
 </div>
-<script>
+<script>${fixtureScript()}</script>
+</body></html>`;
+}
+
+/**
+ * 夹具里的菜单行为（页面 A–D 与场景 F 共用）。刻意复刻真站的四个「坑」：
+ *
+ * 1. **浮层依赖触发按钮的 rect**：X 的 ⋯ 菜单按触发按钮的 bounding rect 定位；推文被
+ *    `display:none` 藏掉后 caret 没有盒子，菜单根本不会渲染 —— 这正是真站
+ *    `自动动作失败：menu_item_not_found:mute` 的根因。夹具里 caret 无盒子就拒开菜单。
+ * 2. **残留菜单**：关闭过的 `Dropdown` 节点留在 DOM 里（页面里预先放了一个 `data-stale`），
+ *    取「文档里第一个 Dropdown」会点到别人的菜单项。
+ * 3. **异步渲染**：菜单项是点击后 ~450ms 才出现的，不是同帧就有。
+ * 4. **文案随语言/构建变化**：静音项在多数构建里没有 testid，只能按文案匹配，
+ *    且菜单里同时存在「取消静音」这类反义项。
+ */
+function fixtureScript() {
+  return `
   window.__actions = [];
-  window.closeMenu = function () { document.querySelectorAll('[data-testid="Dropdown"]').forEach(function (n) { n.remove(); }); };
+  window.__menuBlocked = 0;
+  window.closeMenu = function () {
+    document.querySelectorAll('[data-testid="Dropdown"]:not([data-stale])').forEach(function (n) { n.remove(); });
+  };
   window.showConfirm = function (handle) {
     var sheet = document.createElement('div');
     sheet.id = 'confirm-sheet';
@@ -112,21 +173,46 @@ img{width:80px;height:80px}[role=menuitem]{padding:8px;cursor:pointer}
     window.closeMenu();
     if (kind === 'block') window.showConfirm(handle);
   };
-  window.toggleMenu = function (handle) {
-    var open = document.querySelector('[data-testid="Dropdown"]');
-    if (open) { window.closeMenu(); return; }
-    var menu = document.createElement('div');
-    menu.setAttribute('data-testid', 'Dropdown');
-    menu.setAttribute('role', 'menu');
-    // 陷阱 2：菜单里同时给出反义项（Unmute/Unblock），且静音项不带 testid —— 
-    // 逼着实现走「先排除反义项再按文案匹配」，点错就会被断言抓到。
-    var entries = [
+  window.menuEntriesFor = function (handle) {
+    if (handle === 'spammer_es') {
+      // 真站行为 3：界面语言不是中文时菜单项文案完全变样，且静音项没有 testid。
+      return [
+        { label: 'Unmute @' + handle, kind: 'unmute' },
+        { label: 'Silenciar @' + handle, kind: 'mute' },
+        { label: 'Dejar de silenciar @' + handle, kind: 'unmute' },
+        { label: 'Bloquear @' + handle, kind: 'block', testid: 'block' }
+      ];
+    }
+    if (handle === 'spammer_tid') {
+      // 真站行为 4：静音项只有 data-testid，文案里没有任何可匹配的字样。
+      return [
+        { label: '隐藏这个账号', kind: 'mute', testid: 'mute' },
+        { label: '不再隐藏这个账号', kind: 'unmute' },
+        { label: '拉黑', kind: 'block', testid: 'block' }
+      ];
+    }
+    if (handle === 'spammer_none') {
+      // 真站行为 5：菜单里确实没有静音项 —— 实现必须失败并说清「菜单里有什么」，绝不猜点。
+      return [
+        { label: '关注 @' + handle, kind: 'follow' },
+        { label: '不感兴趣', kind: 'not_interested' },
+        { label: '拉黑 @' + handle, kind: 'block', testid: 'block' }
+      ];
+    }
+    // 默认：中文文案 + 反义项（陷阱 2：静音项不带 testid，逼实现先排除反义再按文案匹配）
+    return [
       { label: 'Unmute @' + handle, kind: 'unmute' },
       { label: 'Mute @' + handle, kind: 'mute' },
       { label: 'Unblock @' + handle, kind: 'unblock', testid: 'unblock' },
       { label: 'Block @' + handle, kind: 'block', testid: 'block' }
     ];
-    entries.forEach(function (entry) {
+  };
+  window.buildMenu = function (handle) {
+    if (document.querySelector('[data-testid="Dropdown"]:not([data-stale])')) return;
+    var menu = document.createElement('div');
+    menu.setAttribute('data-testid', 'Dropdown');
+    menu.setAttribute('role', 'menu');
+    window.menuEntriesFor(handle).forEach(function (entry) {
       var item = document.createElement('div');
       item.setAttribute('role', 'menuitem');
       if (entry.testid) item.setAttribute('data-testid', entry.testid);
@@ -136,7 +222,40 @@ img{width:80px;height:80px}[role=menuitem]{padding:8px;cursor:pointer}
     });
     document.body.appendChild(menu);
   };
-</script>
+  window.toggleMenu = function (handle, el) {
+    var rect = el && el.getBoundingClientRect ? el.getBoundingClientRect() : { width: 1, height: 1 };
+    var art = el && el.closest ? el.closest('article') : null;
+    window.__menuCalls = window.__menuCalls || [];
+    window.__menuCalls.push({
+      handle: handle,
+      w: Math.round(rect.width),
+      h: Math.round(rect.height),
+      hidden: art ? art.getAttribute('data-jevx-hidden') : null,
+      disp: el && el.style ? (el.style.getPropertyValue('display') || '') : '',
+      pos: el && el.style ? (el.style.getPropertyValue('position') || '') : ''
+    });
+    if (!(rect.width > 0 || rect.height > 0)) { window.__menuBlocked += 1; return; }
+    if (document.querySelector('[data-testid="Dropdown"]:not([data-stale])')) { window.closeMenu(); return; }
+    // 真站行为 3：菜单项异步渲染。
+    window.setTimeout(function () { window.buildMenu(handle); }, 450);
+  };
+  document.addEventListener('keydown', function (event) { if (event.key === 'Escape') window.closeMenu(); });
+`;
+}
+
+/** α（阿尔法信息）夹具：同一条推文下的回复线程 —— 三条「跟多数一样」+ 一条「明显不同」。 */
+function replyThreadHtml() {
+  return `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>回复线程夹具</title>
+<style>body{font:14px/1.5 sans-serif;margin:0}article{display:block;padding:12px;border-bottom:1px solid #ddd}</style>
+</head><body>
+<div data-testid="primaryColumn">
+  ${article('1200', 'alice', 'ALPHAPOST：关于这项新政策，大家怎么看？', { displayName: 'Alice' })}
+  ${article('1201', 'reply_a', 'ALPHAMAJOR：这个政策我支持，方向是对的', { replyTo: 'alice' })}
+  ${article('1202', 'reply_b', 'ALPHAMAJOR：支持，方向没问题', { replyTo: 'alice' })}
+  ${article('1203', 'reply_c', 'ALPHAMAJOR：我也支持这个方向', { replyTo: 'alice' })}
+  ${article('1204', 'reply_d', 'ALPHADISSENT：我不同意，公开数据其实是反过来的', { replyTo: 'alice' })}
+</div>
 </body></html>`;
 }
 
@@ -212,6 +331,33 @@ function junkFor(state) {
   return 0.15;
 }
 
+/**
+ * 语义调用（α/β）的答案：按 state 里 `CANDIDATE:` / `REFERENCES:` 区块判定，
+ * 只对夹具里故意写成「语义相同」的对子回答高概率，其它一律低概率 —— 保证断言只考察机制，不靠模型运气。
+ */
+function semanticAnswers(state, questionIds) {
+  const text = String(state);
+  const candidateMatch = /CANDIDATE:\s*([\s\S]*?)(?:\n\s*CANDIDATE_META:|\n\s*REFERENCES:|$)/.exec(text);
+  const candidate = candidateMatch ? candidateMatch[1] : text;
+  const refBlock = /REFERENCES:\s*([\s\S]*)$/.exec(text);
+  const references = refBlock ? refBlock[1] : '';
+  const marker = (t, name) => new RegExp(name).test(t);
+  const sameFamily = (name) => marker(candidate, name) && marker(references, name);
+
+  const answers = {};
+  for (const id of questionIds) {
+    if (id === 'alpha_majority') {
+      answers[id] = { type: 'noul', noul: marker(candidate, 'ALPHADISSENT') ? 0.9 : 0.08 };
+    } else if (id === 'alpha_contrast') {
+      answers[id] = { type: 'score', score: 3, confidence: 0.9, legend: {}, probabilities: {} };
+    } else {
+      // beta_c1..cN
+      answers[id] = { type: 'noul', noul: sameFamily('BETAPAIR') || sameFamily('ALPHAMAJOR') ? 0.88 : 0.05 };
+    }
+  }
+  return answers;
+}
+
 function startMockServer() {
   const state = { jev: [], audits: [] };
   const server = http.createServer((req, res) => {
@@ -234,9 +380,14 @@ function startMockServer() {
         state.jev.push({ url: req.url, headers: req.headers, body: parsed, at: Date.now() });
         const questionIds = Object.keys(parsed.questions ?? {});
         const isProbe = questionIds.length === 1 && questionIds[0] === 'junk';
+        const isFilter = questionIds.includes('adult') && questionIds.includes('category') && questionIds.includes('severity');
         const payload = {
           model: parsed.model ?? 'jev-test',
-          answers: isProbe ? { junk: { type: 'noul', noul: junkFor(parsed.state ?? '') } } : answersFor(parsed.state ?? ''),
+          answers: isProbe
+            ? { junk: { type: 'noul', noul: junkFor(parsed.state ?? '') } }
+            : isFilter
+              ? answersFor(parsed.state ?? '')
+              : semanticAnswers(parsed.state ?? '', questionIds),
           usage: { input_tokens: isProbe ? 90 : 220, output_tokens: isProbe ? 12 : 40 },
         };
         res.writeHead(200, { 'content-type': 'application/json' });
@@ -259,7 +410,9 @@ function startMockServer() {
       return;
     }
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    res.end(pageHtml());
+    if (/\/status\//.test(req.url)) res.end(replyThreadHtml());
+    else if (/scenario=f/.test(req.url)) res.end(menuTrapHtml());
+    else res.end(pageHtml());
   });
   return new Promise((resolve) => {
     server.listen(PORT, '127.0.0.1', () => resolve({ server, state }));
@@ -315,14 +468,27 @@ class CDP {
           this.pending.delete(id);
           reject(new Error(`CDP 超时: ${method}`));
         }
-      }, 30000);
+      }, 60000);
     });
   }
 
+  /** 把目标拉到前台：后台标签页会被 Chrome 节流定时器（`awaitPromise` 的求值可能因此假死）。 */
+  async bringToFront() {
+    try {
+      await this.send('Page.bringToFront');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async evaluate(expression) {
+    await this.bringToFront();
     const result = await this.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
     if (result.exceptionDetails) {
-      throw new Error(`页面脚本异常: ${JSON.stringify(result.exceptionDetails.exception ?? result.exceptionDetails.text)}`);
+      // 把出错的表达式片段带出来，否则只看到一个 SyntaxError 完全无法定位是哪一段脚本
+      const snippet = String(expression).replace(/\s+/g, ' ').slice(0, 100);
+      throw new Error(`页面脚本异常: ${JSON.stringify(result.exceptionDetails.exception ?? result.exceptionDetails.text)} ← ${snippet}`);
     }
     return result.result.value;
   }
@@ -413,12 +579,15 @@ const PROBE = `(() => {
       hidden: a.getAttribute('data-jevx-hidden') === '1',
       band: a.getAttribute('data-jevx-state'),
       source: a.getAttribute('data-jevx-source'),
-      sig: (a.dataset.jevxSig || '').slice(0, 12),
-      epoch: a.dataset.jevxEpoch || '',
-      bar: (a.querySelector(':scope > .jevx-bar')?.textContent || '').replace(/\\s+/g, ' ').slice(0, 160),
+      beta: a.getAttribute('data-jevx-beta'),
+      betaExpanded: a.getAttribute('data-jevx-beta-expanded'),
+      alpha: a.getAttribute('data-jevx-alpha'),
+      text: (a.innerText || '').replace(/\\s+/g, ' ').slice(0, 220),
+      bar: (a.querySelector(':scope > .jevx-bar')?.textContent || '').replace(/\\s+/g, ' ').slice(0, 300),
+      noteTitle: a.querySelector(':scope > .jevx-bar .jevx-note')?.getAttribute('title') || '',
     };
   }
-  return { articles: out, actions: (window.__actions || []).slice(), bodyLen: document.body.textContent.length };
+  return { articles: out, actions: (window.__actions || []).slice(), menuCalls: (window.__menuCalls || []).slice(-12), bodyLen: document.body.textContent.length };
 })()`;
 
 const SW_PROBE = `(() => ({
@@ -430,6 +599,13 @@ const SW_PROBE = `(() => ({
 
 async function main() {
   if (!fs.existsSync(CHROME)) throw new Error(`未找到 Chrome: ${CHROME}`);
+  // 自检：模板字符串会吃掉单个反斜杠（文件里写 `\s`，求值脚本看到的是 `s`）——
+  // 轻则正则失效（文本没做空白折叠），重则整段脚本 SyntaxError（"Unexpected token '.'"），
+  // 而且要到跑完 6 分钟才暴露。启动时先把这类问题变成一句人话。
+  const BACKSLASH = String.fromCharCode(92);
+  if (!PROBE.includes(`${BACKSLASH}s`)) {
+    throw new Error('PROBE 里的 \\s 被模板字符串吃掉了：求值脚本请写成 \\\\s（双反斜杠）');
+  }
   fs.rmSync(PROFILE_DIR, { recursive: true, force: true });
   const extensionPath = prepareExtensionCopy();
   const { server, state: mock } = await startMockServer();
@@ -468,7 +644,13 @@ async function main() {
     console.log(`扩展已加载：${extId}\n`);
 
     const openPage = async (url, { captureErrors = true } = {}) => {
-      const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank' });
+      const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank', background: false });
+      // 每个页面前台化：夹具页面靠 setTimeout 渲染菜单（450ms），后台节流会让整条断言链随机超时。
+      try {
+        await browser.send('Target.activateTarget', { targetId });
+      } catch {
+        /* headless 下可能不支持，忽略 */
+      }
       const targets = await listTargets();
       const target = targets.find((t) => t.id === targetId);
       if (!target) throw new Error(`找不到目标: ${url}`);
@@ -539,9 +721,20 @@ async function main() {
       enabled: true,
       api: { preset: 'custom', baseURL: BASE, model: 'jev-test', apiKey: 'e2e-key', path: '/v1/systemone', timeoutMs: 8000, maxRetries: 0 },
       audit: { webhookUrl: `${BASE}/audit`, logLimit: 500 },
-      budget: { maxJevPerMinute: 60, maxJevPerDay: 500, maxMediaPerMinute: 60, concurrency: 3, cacheTtlMs: 21600000, cacheMaxEntries: 500 },
-      // 测试会在 1 分钟内反复加载 4 个页面，预检配额给足，否则会因预算跳过而影响断言
-      triage: { enabled: true, sampleRate: 1, maxPerMinute: 200, maxPerDay: 600 },
+      // 测试在一个进程里连着跑 6 个页面（每页 20+ 条推文、每条最多 3 次调用），**必须把配额放大**：
+      // 预检/语义层/判定共用同一个「每分钟 Jev 调用」额度，前面场景的突发会把后面场景饿死
+      // （实测场景 E 的 α/β 因为上一场景把分钟额度打满而整层跳过）。限流本身由单测覆盖。
+      // 注意：这里的数值必须落在 settings.js 的夹紧区间内（triage ≤600/分钟、budget ≤600/分钟），
+      // 否则 configure() 的「等 SW 真的应用」会永远等不到（旧版踩过：写 2000 被夹到 600 → 断言超时）。
+      budget: { maxJevPerMinute: 600, maxJevPerDay: 5000, maxMediaPerMinute: 600, concurrency: 3, cacheTtlMs: 21600000, cacheMaxEntries: 500 },
+      triage: { enabled: true, sampleRate: 1, maxPerMinute: 600, maxPerDay: 5000 },
+      semantics: {
+        enabled: true,
+        beta: { enabled: true, threshold: 0.7, maxCandidates: 6, windowSize: 60, foldInFeed: true, foldInReplies: true },
+        alpha: { enabled: true, onlyInReplies: true, threshold: 0.7, minReferences: 3, maxReferences: 12 },
+        maxPerMinute: 600,
+        maxPerDay: 5000,
+      },
       scope: { timeline: true, replies: true, recommended: true, onlyVisible: false, minTextLength: 4 },
     };
     await configure({ ...baseSettings, action: { hide: true, autoMute: true, autoBlock: false, dryRun: true, actionDelayMs: 300, maxActionsPerHour: 20, maxActionsPerDay: 100 } });
@@ -573,6 +766,22 @@ async function main() {
       a['1003']?.hidden === true && a['1004']?.hidden === true,
       `1003=${a['1003']?.band} 1004=${a['1004']?.band}`,
     );
+    check(
+      'β：语义相同、措辞不同 → 第二条被折叠（代表条不折叠）',
+      a['1102']?.beta === '1' && a['1101']?.beta !== '1',
+      `1101=${a['1101']?.beta} 1102=${a['1102']?.beta}`,
+    );
+    check('β 折叠条写明「还有 N 条相似内容」', /还有/.test(a['1102']?.text ?? '') && /相似/.test(a['1102']?.text ?? ''), (a['1102']?.text ?? '').slice(0, 80));
+    const betaToggle = await pageA.cdp.evaluate(`(async () => {
+      const art = document.getElementById('tweet-1102');
+      if (!art) return { clicked: false };
+      const btn = [...art.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '展开');
+      if (!btn) return { clicked: false };
+      btn.click();
+      await new Promise((r) => setTimeout(r, 250));
+      return { clicked: true, expanded: art.dataset.jevxBetaExpanded === '1' };
+    })()`);
+    check('β：点「展开」能把折叠的那条还原', betaToggle.clicked && betaToggle.expanded, JSON.stringify(betaToggle));
     check('诈骗类（荐股/稳赚/加V领取）被判定为 block 档', a['1001']?.hidden === true && a['1001']?.band === 'block', `band=${a['1001']?.band}`);
     check('标题党被隐藏但不进入动作档（该类别不可动账号）', a['1002']?.hidden === true && a['1002']?.band === 'hide', `band=${a['1002']?.band}`);
     check(
@@ -617,10 +826,23 @@ async function main() {
       jev[0]?.headers['user-agent']?.slice(0, 40),
     );
     check('模型名来自设置', jev.every((r) => r.body.model === 'jev-test'));
-    const fullCalls = jev.filter((r) => Object.keys(r.body.questions ?? {}).length === 5);
-    const probeCalls = jev.filter((r) => Object.keys(r.body.questions ?? {}).length === 1 && r.body.questions.junk);
+    const idsOf = (r) => Object.keys(r.body.questions ?? {});
+    const fullCalls = jev.filter((r) => idsOf(r).includes('adult') && idsOf(r).includes('category') && idsOf(r).includes('severity'));
+    const probeCalls = jev.filter((r) => idsOf(r).length === 1 && idsOf(r)[0] === 'junk');
+    const semanticCalls = jev.filter((r) => !fullCalls.includes(r) && !probeCalls.includes(r));
     check('完整判定请求带五问（choice + 三条 noul + score）', fullCalls.length > 0 && fullCalls.every((r) => r.body.questions.adult?.type === 'noul' && r.body.questions.category?.type === 'choice' && r.body.questions.severity?.type === 'score' && r.body.questions.solicitation?.type === 'noul'), `${fullCalls.length} 次四问`);
     check('预检请求只有 junk 一问（廉价召回）', probeCalls.length > 0 && probeCalls.every((r) => Object.keys(r.body.questions).length === 1), `${probeCalls.length} 次预检`);
+    check(
+      '语义调用带明确区块标记（CANDIDATE / CANDIDATE_META / REFERENCES）',
+      semanticCalls.length > 0 &&
+        semanticCalls.every((r) => {
+          const ids = idsOf(r);
+          const hasAlpha = ids.includes('alpha_majority') && ids.includes('alpha_contrast');
+          const hasBeta = ids.some((id) => id.startsWith('beta_c'));
+          return (hasAlpha || hasBeta) && /CANDIDATE:/.test(String(r.body.state)) && /REFERENCES:/.test(String(r.body.state));
+        }),
+      `${semanticCalls.length} 次语义调用`,
+    );
     check('state 里包含原推文案', jev.some((r) => String(r.body.state).includes('同城约啪')));
     check('state 单独给出 display_name（垃圾账号把引流写在显示名里的漏洞）', jev.some((r) => /display_name=.*同城约/.test(String(r.body.state))));
     check('关键词命中的推文不会走预检（省一次调用）', !probeCalls.some((r) => String(r.body.state).includes('同城约')));
@@ -671,7 +893,7 @@ async function main() {
     await configure({
       ...baseSettings,
       scope: { ...baseSettings.scope, onlyVisible: true },
-      action: { hide: true, autoMute: true, autoBlock: false, dryRun: false, actionDelayMs: 300, maxActionsPerHour: 20, maxActionsPerDay: 100 },
+      action: { hide: true, autoMute: true, autoBlock: false, dryRun: false, actionDelayMs: 300, maxActionsPerHour: 200, maxActionsPerDay: 400 },
     });
     const pageB = await openPage(`${BASE}/?scenario=b`);
     let probeB = null;
@@ -699,10 +921,16 @@ async function main() {
     check('同一账号只动作一次（DOM 复渲染不重复执行）', actionsB.length === 4, `动作数 ${actionsB.length}`);
     check('autoBlock 关闭时不会点拉黑', !actionsB.some((x) => x.kind === 'block' || x.kind === 'block-confirmed'), JSON.stringify(actionsB));
     check('没有点到菜单里的反义项（Unmute/Unblock）', !actionsB.some((x) => String(x.kind).startsWith('un')), JSON.stringify(actionsB));
+    check('没有点到 DOM 里残留菜单的假条目（取第一个 Dropdown 就会静音错人）', !actionsB.some((x) => x.stale === true || x.handle === 'stale_ghost'), JSON.stringify(actionsB));
     check('隐藏的弱信号/纯图推文没有被静音（I1）', !actionsB.some((x) => x.handle === 'weak7' || x.handle === 'pic6'), JSON.stringify(actionsB));
     check('账号名/预检命中但未达 block 的样本不会被静音（I1：只有 block 档才动作）', !actionsB.some((x) => x.handle === 'yrmyzhcxvlkzpu'), JSON.stringify(actionsB));
     check('默认不因文案农场静音账号（需要显式打开开关）', !actionsB.some((x) => ['ThomasTurnyysr', 'TinaMysersyro', 'TimothyAndjqqx'].includes(x.handle)), JSON.stringify(actionsB));
     check('场景 B 页面无脚本异常', pageB.errors.length === 0, pageB.errors.slice(0, 2).join(' | '));
+    check(
+      '点击 ⋯ 时触发按钮有非零盒子（被隐藏的推文要临时恢复可渲染）',
+      (probeB.menuCalls ?? []).length > 0 && (probeB.menuCalls ?? []).every((c) => c.w > 0 || c.h > 0),
+      JSON.stringify(probeB.menuCalls ?? []),
+    );
 
     const swCdp2 = await swTarget();
     if (swCdp2) {
@@ -716,7 +944,7 @@ async function main() {
     console.log('\n场景 C：关闭演练 + 允许拉黑');
     await configure({
       ...baseSettings,
-      action: { hide: true, autoMute: false, autoBlock: true, dryRun: false, actionDelayMs: 300, maxActionsPerHour: 20, maxActionsPerDay: 100 },
+      action: { hide: true, autoMute: false, autoBlock: true, dryRun: false, actionDelayMs: 300, maxActionsPerHour: 200, maxActionsPerDay: 400 },
     });
     const pageC = await openPage(`${BASE}/?scenario=c`);
     let probeC = null;
@@ -728,7 +956,7 @@ async function main() {
           const blocked = p.actions.filter((x) => x.kind === 'block').length;
           return hidden >= 14 && blocked >= 4 ? p : null;
         },
-        { label: '场景 C 完成拉黑' },
+        { label: '场景 C 完成拉黑', timeoutMs: 90000 },
       );
     } catch (error) {
       probeC = await pageC.cdp.evaluate(PROBE).catch(() => ({ articles: {}, actions: [] }));
@@ -747,7 +975,7 @@ async function main() {
     console.log('\n场景 D：武装 + 隐藏档也静音');
     await configure({
       ...baseSettings,
-      action: { hide: true, autoMute: true, autoBlock: false, dryRun: false, muteOnHide: true, actionDelayMs: 300, maxActionsPerHour: 20, maxActionsPerDay: 100 },
+      action: { hide: true, autoMute: true, autoBlock: false, dryRun: false, muteOnHide: true, actionDelayMs: 300, maxActionsPerHour: 200, maxActionsPerDay: 400 },
     });
     const pageD = await openPage(`${BASE}/?scenario=d`);
     const FARM_HANDLES = ['ThomasTurnyysr', 'TinaMysersyro', 'TimothyAndjqqx'];
@@ -758,7 +986,9 @@ async function main() {
           const p = await pageD.cdp.evaluate(PROBE);
           const hidden = Object.values(p.articles).filter((x) => x.hidden).length;
           const farmMuted = FARM_HANDLES.every((h) => p.actions.some((x) => x.kind === 'mute' && x.handle === h));
-          return hidden >= 9 && farmMuted ? p : null;
+          // 动作是排队串行的：等到「农场 3 条 + 标题党 1 条」都落袋再断言，否则最后一条会被判成缺失（竞态）
+          const clickbaitMuted = p.actions.some((x) => x.kind === 'mute' && x.handle === 'buzzfeed_cn');
+          return hidden >= 9 && farmMuted && clickbaitMuted ? p : null;
         },
         { label: '场景 D 完成隐藏与农场静音', timeoutMs: 90000 },
       );
@@ -773,16 +1003,179 @@ async function main() {
     check('标题党账号在「隐藏档也静音」下才会被静音（默认只隐藏）', actionsD.some((x) => x.kind === 'mute' && x.handle === 'buzzfeed_cn'), JSON.stringify(actionsD));
     check('场景 D 页面无脚本异常', pageD.errors.length === 0, pageD.errors.slice(0, 2).join(' | '));
 
+    // ---- 6d. 场景 E：α（与评论区多数观点不同）+ 线程内 β ----
+    console.log('\n场景 E：α 特殊观点标记 + 线程内 β 折叠');
+    await configure({
+      ...baseSettings,
+      scope: { ...baseSettings.scope, onlyVisible: false, replies: true },
+      semantics: {
+        enabled: true,
+        beta: { enabled: true, threshold: 0.7, maxCandidates: 6, windowSize: 60, foldInFeed: true, foldInReplies: true },
+        // 夹具线程里只有 3 条「多数」回复，把参考门槛降到 2，保证最后一条能看到多数意见
+        alpha: { enabled: true, onlyInReplies: true, threshold: 0.7, minReferences: 2, maxReferences: 12 },
+        maxPerMinute: 60,
+        maxPerDay: 300,
+      },
+      action: { hide: true, autoMute: true, autoBlock: false, dryRun: true, muteOnHide: false, actionDelayMs: 300, maxActionsPerHour: 20, maxActionsPerDay: 100 },
+    });
+    const pageE = await openPage(`${BASE}/alice/status/1912000000000000001?scenario=e`);
+    let probeE = null;
+    try {
+      probeE = await waitFor(
+        async () => {
+          const p = await pageE.cdp.evaluate(PROBE);
+          const alphaMarked = Object.values(p.articles).filter((x) => x.alpha === '1').length;
+          const betaFolded = Object.values(p.articles).filter((x) => x.beta === '1').length;
+          return alphaMarked >= 1 && betaFolded >= 1 ? p : null;
+        },
+        { label: '场景 E 出现 α 标记与 β 折叠', timeoutMs: 70000 },
+      );
+    } catch (error) {
+      probeE = await pageE.cdp.evaluate(PROBE).catch(() => ({ articles: {}, actions: [] }));
+      check('场景 E 出现 α 标记与 β 折叠', false, String(error.message));
+    }
+    const e = probeE.articles ?? {};
+    check('α：与评论区多数明显不同的回复被标记', e['1204']?.alpha === '1', `alpha=${e['1204']?.alpha}`);
+    check('α：被标记的推文仍然完整可见（不隐藏、不折叠）', e['1204']?.hidden !== true && e['1204']?.beta !== '1', JSON.stringify({ hidden: e['1204']?.hidden, beta: e['1204']?.beta }));
+    check('α 徽标文本含 α 与中文说明', /α/.test(e['1204']?.text ?? ''), (e['1204']?.text ?? '').slice(0, 60));
+    check('β：线程内语义相同的回复被折叠（至少一条）', Object.values(e).filter((x) => x.beta === '1').length >= 1, JSON.stringify(Object.entries(e).map(([k, v]) => `${k}:${v.beta ?? '-'}`)));
+    check('场景 E 不产生账号动作（都是普通内容）', (probeE.actions ?? []).length === 0, JSON.stringify(probeE.actions));
+    check('场景 E 页面无脚本异常', pageE.errors.length === 0, pageE.errors.slice(0, 2).join(' | '));
+
+    // SW 侧的语义计数要在**刚跑完场景 E 时**读：设置页那次读取可能已经跨过 Service Worker 重启（内存计数归零）。
+    const swCdpE = await swTarget();
+    if (swCdpE) {
+      const swE = await swCdpE.evaluate(SW_PROBE);
+      const sem = swE.stats?.semantics ?? null;
+      check('SW 统计里语义调用 ≥ 1 且候选组 ≥ 1（语义层真的跑过）', (sem?.calls ?? 0) >= 1 && (sem?.candidateSets ?? 0) >= 1, JSON.stringify(sem));
+      check('SW 统计里 α 命中 ≥ 1', (sem?.alphaHits ?? 0) >= 1, JSON.stringify(sem));
+      check('SW 统计里 β 折叠 ≥ 1（同页相似内容真的被折叠）', (sem?.betaFolds ?? 0) >= 1, JSON.stringify(sem));
+      swCdpE.close();
+    }
+
+    // ---- 6e. 场景 F：菜单自动化鲁棒性（真站 `menu_item_not_found:mute` 的回归） ----
+    console.log('\n场景 F：隐藏推文的菜单自动化（触发盒子 / 残留菜单 / 异步渲染 / 多语言 / 缺项诊断）');
+    await configure({
+      ...baseSettings,
+      semantics: { ...baseSettings.semantics, enabled: false },
+      scope: { ...baseSettings.scope, onlyVisible: false },
+      action: { hide: true, autoMute: true, autoBlock: false, dryRun: false, muteOnHide: false, actionDelayMs: 300, maxActionsPerHour: 200, maxActionsPerDay: 400 },
+    });
+    const pageF = await openPage(`${BASE}/?scenario=f`);
+    let probeF = null;
+    try {
+      probeF = await waitFor(
+        async () => {
+          const p = await pageF.cdp.evaluate(PROBE);
+          const muted = p.actions.filter((x) => x.kind === 'mute').length;
+          return muted >= 2 && /重试/.test(p.articles['9003']?.bar ?? '') ? p : null;
+        },
+        { label: '场景 F 完成两条静音并留下缺项诊断', timeoutMs: 70000 },
+      );
+    } catch (error) {
+      probeF = await pageF.cdp.evaluate(PROBE).catch(() => ({ articles: {}, actions: [] }));
+      check('场景 F 完成两条静音并留下缺项诊断', false, String(error.message));
+    }
+    const f = probeF.articles ?? {};
+    const actionsF = probeF.actions ?? [];
+    const blockedF = await pageF.cdp.evaluate('window.__menuBlocked || 0').catch(() => -1);
+    check('⋯ 菜单在推文被隐藏后仍然打开（触发按钮有非零盒子）', blockedF === 0, `被拒开 ${blockedF} 次`);
+    check(
+      '多语言菜单项（西语 Silenciar，且混入反义项 Dejar de silenciar）点的是静音',
+      actionsF.some((x) => x.kind === 'mute' && x.handle === 'spammer_es'),
+      JSON.stringify(actionsF),
+    );
+    check('只有 data-testid 的菜单项（文案不可匹配）也能命中', actionsF.some((x) => x.kind === 'mute' && x.handle === 'spammer_tid'), JSON.stringify(actionsF));
+    check('没有点到菜单里的反义项', !actionsF.some((x) => String(x.kind).startsWith('un')), JSON.stringify(actionsF));
+    check('没有点到 DOM 里残留菜单的假条目（取第一个 Dropdown 就会中招）', !actionsF.some((x) => x.stale === true || x.handle === 'stale_ghost'), JSON.stringify(actionsF));
+    check(
+      '菜单里没有静音项时绝不猜点（关注/不感兴趣/拉黑都不点）',
+      !actionsF.some((x) => ['follow', 'not_interested', 'block', 'block-confirmed'].includes(x.kind) && x.handle === 'spammer_none'),
+      JSON.stringify(actionsF),
+    );
+    check('失败提示是人话且给出「重试」指引', /自动动作失败/.test(f['9003']?.bar ?? '') && /重试/.test(f['9003']?.bar ?? ''), f['9003']?.bar);
+    check(
+      '失败时把「菜单里实际有什么」写进提示的 title（真站靠它定位选择器漂移）',
+      /菜单里实际有/.test(f['9003']?.noteTitle ?? ''),
+      f['9003']?.noteTitle,
+    );
+    // 诊断要从**审计事件**读，而不是页面里的 `__jevxContent.summary()`：
+    // 内容脚本跑在 isolated world，主世界的 Runtime.evaluate 看不到它的全局变量
+    // （之前那版断言一直拿到 null，就是这个原因）。审计事件走的是真实消息通道，口径更对。
+    const swCdpF = await swTarget();
+    let failures = [];
+    if (swCdpF) {
+      const swF = await swCdpF.evaluate(SW_PROBE);
+      failures = (swF.audit ?? []).filter((e) => e.type === 'action_failed');
+      swCdpF.close();
+    }
+    const itemMissing = failures.find((e) => String(e.error ?? '').startsWith('menu_item_not_found')) ?? null;
+    check('失败原因区分「菜单项缺失」而不是笼统失败（审计事件）', Boolean(itemMissing), JSON.stringify(failures.map((e) => e.error)));
+    check('审计里带上了菜单项清单', (itemMissing?.menu?.items ?? []).length >= 2, JSON.stringify(itemMissing?.menu ?? null));
+    check('场景 F 页面无脚本异常', pageF.errors.length === 0, pageF.errors.slice(0, 2).join(' | '));
+
     // ---- 7. 扩展页面可用性 ----
     console.log('\n扩展页面检查');
-    const optionsProbe = await optionsPage.cdp.evaluate(`(() => ({
-      status: document.getElementById('api-status').textContent,
-      fields: document.querySelectorAll('[data-path]').length,
-      presets: document.getElementById('preset').options.length,
-      audit: document.getElementById('audit').textContent.slice(0, 80),
-    }))()`);
-    check('设置页渲染完整', optionsProbe.fields >= 40 && optionsProbe.presets === 5, `字段 ${optionsProbe.fields} / 预设 ${optionsProbe.presets}`);
+    const optionsProbe = await optionsPage.cdp.evaluate(`(() => {
+      const wanted = [
+        'semantics.enabled',
+        'semantics.beta.enabled',
+        'semantics.beta.threshold',
+        'semantics.beta.maxCandidates',
+        'semantics.beta.foldInFeed',
+        'semantics.beta.foldInReplies',
+        'semantics.alpha.enabled',
+        'semantics.alpha.onlyInReplies',
+        'semantics.alpha.threshold',
+        'semantics.alpha.minReferences',
+        'semantics.maxPerMinute',
+        'semantics.maxPerDay',
+      ];
+      return {
+        status: document.getElementById('api-status').textContent,
+        fields: document.querySelectorAll('[data-path]').length,
+        presets: document.getElementById('preset').options.length,
+        semanticsFields: wanted.filter((p) => document.querySelector('[data-path="' + p + '"]')).length,
+        semanticsSection: /α\\s*[/]\\s*β/.test(document.body.innerText),
+        statsText: document.getElementById('stats').textContent.slice(0, 400),
+        audit: document.getElementById('audit').textContent.slice(0, 80),
+      };
+    })()`);
+    check('设置页渲染完整', optionsProbe.fields >= 79 && optionsProbe.presets === 5, `字段 ${optionsProbe.fields} / 预设 ${optionsProbe.presets}`);
+    check('设置页有 α/β 语义节（12 个字段）', optionsProbe.semanticsFields >= 12 && optionsProbe.semanticsSection, `语义字段 ${optionsProbe.semanticsFields}`);
+    check('设置页统计区展示 α/β 计数', /β/.test(optionsProbe.statsText) && /α/.test(optionsProbe.statsText), optionsProbe.statsText.replace(/\s+/g, ' ').slice(0, 80));
+
+    // 保存 α/β 阈值 → 回读应一致（UI 的 data-path 声明式绑定 + SW 的 normalize 都要对）
+    const saveProbe = await optionsPage.cdp.evaluate(`(async () => {
+      const field = document.querySelector('[data-path="semantics.beta.threshold"]');
+      field.value = '0.85';
+      document.getElementById('save').click();
+      await new Promise((r) => setTimeout(r, 800));
+      const state = await new Promise((resolve) => chrome.runtime.sendMessage({ type: 'JEVX_GET_STATE' }, resolve));
+      const saved = state?.settings?.semantics?.beta?.threshold ?? null;
+      field.value = '0.7';
+      document.getElementById('save').click();
+      await new Promise((r) => setTimeout(r, 600));
+      return { saved };
+    })()`);
+    check('设置页保存 α/β 阈值后 SW 回读一致', saveProbe.saved === 0.85, JSON.stringify(saveProbe));
     check('设置页显示模型就绪', /就绪/.test(optionsProbe.status), optionsProbe.status);
+
+    const semStatsProbe = await optionsPage.cdp.evaluate(`(async () => {
+      const state = await new Promise((resolve) => chrome.runtime.sendMessage({ type: 'JEVX_GET_STATE' }, resolve));
+      return state?.stats?.semantics ?? null;
+    })()`);
+    check(
+      '后台统计含语义层字段（形状契约：调用 / 折叠 / 命中 / 跳过 / 失败 / 候选组）',
+      Boolean(semStatsProbe) &&
+        Number.isFinite(semStatsProbe.calls) &&
+        Number.isFinite(semStatsProbe.betaFolds) &&
+        Number.isFinite(semStatsProbe.alphaHits) &&
+        Number.isFinite(semStatsProbe.skipped) &&
+        Number.isFinite(semStatsProbe.errors) &&
+        Number.isFinite(semStatsProbe.candidateSets),
+      JSON.stringify(semStatsProbe),
+    );
 
     const testResult = await optionsPage.cdp.evaluate(`(async () => {
       document.getElementById('test-text').value = '同城约啪 加电报 t.me/e2e';
@@ -812,6 +1205,30 @@ async function main() {
     check('弹窗显示统计与模型状态', popupProbe.cells >= 6 && /jev-test|就绪/.test(popupProbe.status), `${popupProbe.status} / ${popupProbe.cells} 格`);
     check('弹窗显示当前模式（演练/武装 + 静音范围）', /演练|武装/.test(popupProbe.mode ?? ''), popupProbe.mode);
     check('弹窗无脚本异常', popupPage.errors.length === 0, popupPage.errors.slice(0, 2).join(' | '));
+    const popupToggle = await popupPage.cdp.evaluate(`(async () => {
+      const before = await new Promise((resolve) => chrome.runtime.sendMessage({ type: 'JEVX_GET_STATE' }, resolve));
+      const box = document.getElementById('semBeta');
+      if (!box) return { missing: true };
+      box.checked = false;
+      box.dispatchEvent(new Event('change'));
+      await new Promise((r) => setTimeout(r, 600));
+      const off = await new Promise((resolve) => chrome.runtime.sendMessage({ type: 'JEVX_GET_STATE' }, resolve));
+      box.checked = true;
+      box.dispatchEvent(new Event('change'));
+      await new Promise((r) => setTimeout(r, 600));
+      const on = await new Promise((resolve) => chrome.runtime.sendMessage({ type: 'JEVX_GET_STATE' }, resolve));
+      return {
+        before: before?.settings?.semantics?.beta?.enabled ?? null,
+        off: off?.settings?.semantics?.beta?.enabled ?? null,
+        on: on?.settings?.semantics?.beta?.enabled ?? null,
+        hasAlphaSwitch: Boolean(document.getElementById('semAlpha')),
+      };
+    })()`);
+    check(
+      '弹窗 β 开关能真实翻转设置（关→开）',
+      popupToggle.hasAlphaSwitch && popupToggle.off === false && popupToggle.on === true,
+      JSON.stringify(popupToggle),
+    );
 
     // ---- 8. 黑名单导入导出（走真实消息通道） ----
     const listProbe = await optionsPage.cdp.evaluate(`(async () => {
@@ -826,7 +1243,7 @@ async function main() {
     check('导入通道可用', listProbe.imported?.ok === true && listProbe.imported.added === 2, JSON.stringify(listProbe.imported ?? {}));
     check('导出内容包含全部账号', /imported_one/.test(listProbe.exported ?? '') && /spammer1|escort4/.test(listProbe.exported ?? ''), listProbe.after?.join(','));
 
-    for (const page of [optionsPage, pageA, pageB, pageC, pageD, popupPage]) page.cdp.close();
+    for (const page of [optionsPage, pageA, pageB, pageC, pageD, pageE, pageF, popupPage]) page.cdp.close();
     browser.close();
   } finally {
     try {

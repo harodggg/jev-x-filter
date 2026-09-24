@@ -11,6 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -92,6 +93,17 @@ try {
   zipNote = `${path.relative(ROOT, zipPath)}（${(fs.statSync(zipPath).size / 1024).toFixed(1)} KB）`;
 } catch {
   /* 没有 zip 就只产出目录 */
+}
+
+// SHA256SUMS.txt 随包一起生成（发布时和 zip 一起上传）：
+// 之前这文件是手工敲的，容易和 zip 对不上——现在打包即出校验和。
+const sumsPath = path.join(DIST, 'SHA256SUMS.txt');
+if (fs.existsSync(zipPath)) {
+  const hash = createHash('sha256').update(fs.readFileSync(zipPath)).digest('hex');
+  fs.writeFileSync(sumsPath, `${hash}  ${stageName}.zip\n`);
+  console.log(`  sha：${path.relative(ROOT, sumsPath)} → ${hash.slice(0, 16)}…`);
+} else {
+  fs.rmSync(sumsPath, { force: true });
 }
 
 function countFiles(dir) {

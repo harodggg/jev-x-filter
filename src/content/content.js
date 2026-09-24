@@ -12,7 +12,7 @@
 
   const S = globalThis.JevXSelectors;
   const X = globalThis.JevXExtract;
-  const VERSION = '0.3.1';
+  const VERSION = '0.4.0';
 
   const state = {
     settings: null,
@@ -25,6 +25,11 @@
     planned: 0,
     errors: 0,
     lastActionAt: 0,
+    /** 最近一次账号动作失败的原因与当时的菜单内容（供设置页/端到端诊断选择器漂移）。 */
+    lastActionError: null,
+    /** 失败**历史**（最多 10 条）：一次失败之后如果还有别的推文动作成功，只留 lastActionError 就会被清掉，
+     *  真站排障时「为什么这条没静音」需要的是历史而不是最后一刻的状态。 */
+    actionErrors: [],
     ownHandle: '',
     startedAt: Date.now(),
   };
@@ -210,6 +215,156 @@
     return null;
   }
 
+  /* ----------------------- β 折叠条 / α 徽标（纯展示） ----------------------- */
+
+  /**
+   * 端到端测试与调试依赖的稳定属性（见 tools/verify-in-chrome.js）：
+   * - article.dataset.jevxBeta = '1'         这条推文被 β 折叠（展开后仍保留，表示「这条是相似内容」）
+   * - article.dataset.jevxBetaExpanded = '1' 折叠条当前处于展开态
+   * - article.dataset.jevxAlpha = '1'        这条推文带 α 徽标
+   * 三个属性都只是展示层状态，**不参与**隐藏判定与账号动作。
+   */
+
+  /** 按推文 id 找页面上的 article：用来把 beta.duplicateOf（推文 id）显示成 @handle。 */
+  function findArticleById(id) {
+    const wanted = String(id ?? '');
+    if (!wanted) return null;
+    for (const article of S.findTweets(document)) {
+      if (String(S.getTweetId(article) ?? '') === wanted) return article;
+      if (String(article.dataset.jevxId ?? '') === wanted) return article;
+    }
+    return null;
+  }
+
+  /** β 条里代表账号的显示名：优先 SW 直接给的 handle，否则在当前页面按推文 id 反查。 */
+  function resolveDuplicateLabel(beta) {
+    const explicit = beta?.duplicateOfHandle ?? beta?.handle;
+    if (typeof explicit === 'string' && explicit.trim()) return explicit.trim().replace(/^@/, '');
+    if (!beta?.duplicateOf) return '';
+    const found = findArticleById(beta.duplicateOf);
+    return found ? S.getHandle(found) || '' : '';
+  }
+
+  function buildBetaBar(article, tweet, beta) {
+    const bar = document.createElement('div');
+    bar.className = 'jevx-beta-bar';
+    bar.setAttribute('role', 'note');
+
+    const label = resolveDuplicateLabel(beta);
+    const sameText = label ? `与 @${label} 的内容相同` : `与 @${String(beta?.duplicateOf ?? '?')} 的内容相同`;
+    const groupSize = Number(beta?.groupSize);
+    const others = Number.isFinite(groupSize) ? Math.max(0, groupSize - 1) : 0;
+    const baseText = `${sameText} · 还有 ${others} 条相似内容`;
+
+    const text = document.createElement('span');
+    text.className = 'jevx-beta-text';
+    text.textContent = baseText;
+    const kindLabel =
+      { verbatim: '内容完全相同', paraphrase: '措辞不同、意思相同', same_claim: '表达同一个说法' }[beta?.kind] ?? '相似内容';
+    const detail = [kindLabel];
+    if (Number.isFinite(Number(beta?.similarity))) detail.push(`相似度 ${(Number(beta.similarity) * 100).toFixed(0)}%`);
+    if (beta?.groupKey) detail.push(`分组 ${beta.groupKey}`);
+    text.title = detail.join(' · ');
+    bar.appendChild(text);
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'jevx-beta-toggle';
+    toggle.textContent = '展开';
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.setAttribute('aria-label', '展开被折叠的相似内容');
+    toggle.addEventListener('click', (event) => {
+      // 不要冒泡给 X 的 article 点击处理，否则展开/收起会顺带打开详情页。
+      event?.stopPropagation?.();
+      setBetaExpanded(article, bar, text, baseText, article.dataset.jevxBetaExpanded !== '1');
+    });
+    bar.appendChild(toggle);
+    return bar;
+  }
+
+  /**
+   * 切换折叠/展开：条本身保留（再次点击才能折叠回去），只按属性让子节点重新可见。
+   * 展开不触碰 state.hidden / state.decisions / 账号动作。
+   */
+  function setBetaExpanded(article, bar, textEl, baseText, expanded) {
+    if (expanded) article.dataset.jevxBetaExpanded = '1';
+    else delete article.dataset.jevxBetaExpanded;
+    bar.classList.toggle('jevx-beta-bar--expanded', expanded);
+    textEl.textContent = expanded ? `已展开 · ${baseText}` : baseText;
+    const toggle = bar.querySelector('.jevx-beta-toggle');
+    if (toggle) {
+      toggle.textContent = expanded ? '收起' : '展开';
+      toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      toggle.setAttribute('aria-label', expanded ? '重新折叠这条相似内容' : '展开被折叠的相似内容');
+    }
+  }
+
+  function clearBeta(article) {
+    if (!article) return;
+    article.querySelectorAll(':scope > .jevx-beta-bar').forEach((el) => el.remove());
+    delete article.dataset.jevxBeta;
+    delete article.dataset.jevxBetaExpanded;
+  }
+
+  /**
+   * β 折叠：仅当 SW 明确给了 `beta.folded === true`、且不是 α 命中、且这条推文没有被过滤时执行。
+   * 缺字段 / folded 非 true 时走 clearBeta，行为与引入 α/β 之前完全一致。
+   */
+  function applyBetaFold(article, tweet, decision) {
+    const beta = decision?.beta;
+    const alphaHit = decision?.alpha?.hit === true;
+    if (!beta || beta.folded !== true || alphaHit || article.dataset.jevxHidden === '1') {
+      clearBeta(article);
+      return;
+    }
+    if (article.dataset.jevxBeta === '1' && article.querySelector(':scope > .jevx-beta-bar')) return;
+    clearBeta(article);
+    article.insertBefore(buildBetaBar(article, tweet, beta), article.firstChild);
+    article.dataset.jevxBeta = '1';
+    delete article.dataset.jevxBetaExpanded;
+    log('β 折叠', tweet.id, beta.groupKey);
+  }
+
+  function buildAlphaBadge(alpha) {
+    const badge = document.createElement('div');
+    badge.className = 'jevx-alpha-badge';
+    badge.setAttribute('role', 'note');
+
+    const summary = typeof alpha?.summary === 'string' && alpha.summary.trim() ? alpha.summary.trim() : '与评论区多数观点不同';
+    const span = document.createElement('span');
+    span.className = 'jevx-alpha-text';
+    span.textContent = `α · ${summary}`;
+    badge.appendChild(span);
+
+    const refs = Number(alpha?.referenceCount);
+    const score = Number(alpha?.score);
+    const detail = [];
+    if (Number.isFinite(refs)) detail.push(`参照 ${refs} 条`);
+    if (Number.isFinite(score)) detail.push(`分数 ${score.toFixed(2)}`);
+    badge.title = detail.length ? `${summary}（${detail.join(' · ')}）` : summary;
+    badge.setAttribute('aria-label', detail.length ? `α ${summary}，${detail.join('，')}` : `α ${summary}`);
+    return badge;
+  }
+
+  function clearAlpha(article) {
+    if (!article) return;
+    article.querySelectorAll(':scope > .jevx-alpha-badge').forEach((el) => el.remove());
+    delete article.dataset.jevxAlpha;
+  }
+
+  /** α 标记：只加徽标，**不隐藏、不折叠**，也不改变任何账号动作。 */
+  function applyAlphaMark(article, decision) {
+    const alpha = decision?.alpha;
+    if (!alpha || alpha.hit !== true || article.dataset.jevxHidden === '1') {
+      clearAlpha(article);
+      return;
+    }
+    if (article.querySelector(':scope > .jevx-alpha-badge')) return;
+    article.insertBefore(buildAlphaBadge(alpha), article.firstChild);
+    article.dataset.jevxAlpha = '1';
+    log('α 标记', article.dataset.jevxKey, alpha.reason);
+  }
+
   /** 记录 article 与它的农场键，供农场命中时追溯隐藏。 */
   function indexFarm(article, tweet) {
     const key = X.farmKey(tweet?.text);
@@ -252,6 +407,9 @@
     const key = X.tweetKey(tweet);
     const existing = state.hidden.get(key);
     if (existing && existing.article === article && article.dataset.jevxHidden === '1') return;
+    // 隐藏优先：被过滤的推文不再保留 β 折叠条与 α 徽标（它们不是 .jevx-bar，会被隐藏 CSS 一起藏掉）。
+    clearBeta(article);
+    clearAlpha(article);
     const bar = buildBar(tweet, decision);
     article.querySelectorAll(':scope > .jevx-bar').forEach((el) => el.remove());
     article.appendChild(bar);
@@ -290,6 +448,11 @@
       }
     }
     state.hidden.clear();
+    // β 折叠条与 α 徽标不在 state.hidden 里，必须单独清一遍（重置/重扫/关闭扩展时）。
+    for (const article of S.findTweets(document)) {
+      clearBeta(article);
+      clearAlpha(article);
+    }
     updateBadge();
   }
 
@@ -299,6 +462,16 @@
   }
 
   /* ------------------------------- 自动动作 ------------------------------- */
+
+  /** Escape 的补发定时器：必须可取消，否则上一次失败的 300ms 延迟 Escape 会关掉这一次刚打开的菜单。 */
+  let escapeTimer = null;
+
+  function cancelPendingEscape() {
+    if (escapeTimer) {
+      clearTimeout(escapeTimer);
+      escapeTimer = null;
+    }
+  }
 
   function pressEscape() {
     // X 打开菜单后会把焦点移到菜单上，并把 Escape 监听挂在那里：
@@ -311,7 +484,9 @@
     } catch {
       /* ignore */
     }
-    setTimeout(() => {
+    cancelPendingEscape();
+    escapeTimer = setTimeout(() => {
+      escapeTimer = null;
       if (!S.getOpenMenu()) return;
       try {
         document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', opts));
@@ -319,6 +494,150 @@
         /* ignore */
       }
     }, 300);
+  }
+
+  function nextFrame() {
+    // 只等一帧让样式落定；后台标签页里 requestAnimationFrame 可能长期不触发，所以必须有超时兜底
+    // （内联样式是同步生效的，这一帧只是礼貌，不能让它卡住整个动作队列）。
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      const timer = setTimeout(finish, 120);
+      const raf = globalThis.requestAnimationFrame;
+      if (typeof raf === 'function') {
+        raf(() => {
+          clearTimeout(timer);
+          finish();
+        });
+      } else {
+        clearTimeout(timer);
+        finish();
+      }
+    });
+  }
+
+  const RENDER_STYLE_PROPS = ['display', 'visibility', 'position', 'top', 'left', 'width', 'height', 'overflow', 'opacity'];
+
+  function patchInlineStyle(el, css) {
+    const saved = new Map();
+    for (const prop of RENDER_STYLE_PROPS) {
+      saved.set(prop, { value: el.style.getPropertyValue(prop), priority: el.style.getPropertyPriority(prop) });
+    }
+    for (const [prop, value] of Object.entries(css)) el.style.setProperty(prop, value, 'important');
+    return () => {
+      for (const prop of RENDER_STYLE_PROPS) {
+        const prev = saved.get(prop);
+        if (prev?.value) el.style.setProperty(prop, prev.value, prev.priority);
+        else el.style.removeProperty(prop);
+      }
+    };
+  }
+
+  /**
+   * 让「被隐藏推文」里的 ⋯ 按钮临时恢复成「有盒子但不可见」。
+   *
+   * 根因（真站 `自动动作失败：menu_item_not_found:mute`）：推文被 `article[data-jevx-hidden=1] > *:not(.jevx-bar)`
+   * 藏起来后，caret 的 bounding rect 是 0×0；X 的菜单浮层按**触发按钮的 rect** 定位，
+   * 触发按钮没有盒子时菜单要么不渲染、要么渲染到视口外 —— 于是永远找不到菜单项。
+   *
+   * 处理：只把 caret→article 这一段祖先链改成 `display:block + visibility:hidden`（有盒子、不可见、不占高度），
+   * caret 自身 1×1 固定在视口左上角。推文依旧不可见、不闪动、不改变隐藏语义；返回还原函数。
+   */
+  function makeTriggerRenderable(article, caret) {
+    const restores = [];
+    const isHiddenByStyle = (node) => {
+      try {
+        return globalThis.getComputedStyle?.(node)?.display === 'none';
+      } catch {
+        return false;
+      }
+    };
+    try {
+      for (let node = caret?.parentElement; node && node !== article; node = node.parentElement) {
+        if (!isHiddenByStyle(node)) continue;
+        restores.push(patchInlineStyle(node, { display: 'block', visibility: 'hidden' }));
+      }
+      restores.push(
+        patchInlineStyle(caret, {
+          display: 'block',
+          visibility: 'hidden',
+          position: 'fixed',
+          top: '0px',
+          left: '0px',
+          width: '1px',
+          height: '1px',
+          overflow: 'hidden',
+          opacity: '0',
+        }),
+      );
+      // 读一次 rect 强制排版，保证点击时它已经有非零盒子。
+      caret.getBoundingClientRect();
+    } catch {
+      /* 样式补丁失败也要尽量把菜单点出来：这里绝不抛 */
+    }
+    return () => {
+      for (let i = restores.length - 1; i >= 0; i -= 1) {
+        try {
+          restores[i]();
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+  }
+
+  /**
+   * 打开 ⋯ 菜单并挑出目标菜单项。三级阶梯：
+   * 1. 原生 `.click()`（绝大多数构建）；
+   * 2. 补一整套 pointer/mouse 序列但不补 click（少数构建把菜单挂在 mousedown/pointerdown 上，
+   *    补 click 反而可能把它关掉）；
+   * 3. 两者都补。
+   * 每一级都等「新出现的、含 menuitem 的菜单」，失败先 Escape 关掉再试，绝不猜点。
+   */
+  const MENU_OPEN_ATTEMPTS = [
+    { pointer: false, native: true, timeoutMs: 2500 },
+    { pointer: true, native: false, timeoutMs: 2000 },
+    { pointer: true, native: true, timeoutMs: 2000 },
+  ];
+
+  async function openMenuAndPick(caret, kind, handle) {
+    const before = S.collectMenus();
+    let sawMenu = false;
+    let captured = null;
+    for (const attempt of MENU_OPEN_ATTEMPTS) {
+      cancelPendingEscape();
+      S.clickElement(caret, { pointer: attempt.pointer, native: attempt.native });
+      const menu = await S.waitFor(() => S.pickFreshMenu(before), { timeoutMs: attempt.timeoutMs });
+      if (menu) {
+        sawMenu = true;
+        // 在菜单**还开着**的时候抓一份内容快照：失败后菜单已被 Escape 关掉，再查就只能查到残留节点了。
+        if (!captured) captured = S.describeMenu(menu);
+      }
+      // 带上目标 handle：残留菜单里写的是别的账号，靠这一条也能拦住「静音错人」。
+      const item = S.findMenuItem(kind, { menu, handle });
+      if (item) return { item, menu, sawMenu, items: captured ?? [] };
+      if (!captured) captured = S.describeMenu(null);
+      pressEscape();
+      await new Promise((r) => setTimeout(r, 350));
+    }
+    return { item: null, menu: null, sawMenu, items: captured ?? [] };
+  }
+
+  const ACTION_ERROR_TITLE = {
+    caret_not_found: '找不到这条推文的 ⋯ 按钮',
+    menu_not_opened: '点了 ⋯ 但菜单没有打开',
+    menu_item_not_found: '菜单里没有对应的静音/拉黑项',
+  };
+
+  /** 把内部错误码翻译成人话（截图里那种 `menu_item_not_found:mute` 用户看不懂）。 */
+  function humanActionError(code, kind) {
+    const head = String(code).split(':')[0];
+    const target = kind === 'block' ? '拉黑' : '静音';
+    return `${ACTION_ERROR_TITLE[head] ?? '界面操作失败'}（目标：${target}）`;
   }
 
   async function waitForActionGap() {
@@ -342,6 +661,7 @@
       return true;
     }
     acted.add(dedupeKey);
+    let restoreTrigger = () => {};
     try {
       for (const kind of kinds) {
         await waitForActionGap();
@@ -350,13 +670,19 @@
         // 记录点击前就存在的确认按钮：X 会复用 confirmationSheetConfirm 给别的弹窗，
         // 只认「新出现的那个」，避免误点一个早就挂着的对话框。
         const existingConfirms = S.snapshotConfirmButtons();
-        caret.click();
-        const item = await S.waitFor(() => S.findMenuItem(kind), { timeoutMs: 3000 });
-        if (!item) {
-          pressEscape();
-          throw new Error(`menu_item_not_found:${kind}`);
+        // 被隐藏的推文先临时恢复 ⋯ 按钮的盒子，否则 X 的浮层拿不到锚点（见 makeTriggerRenderable）。
+        if (article.dataset.jevxHidden === '1') {
+          restoreTrigger();
+          restoreTrigger = makeTriggerRenderable(article, caret);
+          await nextFrame();
         }
-        item.click();
+        const found = await openMenuAndPick(caret, kind, tweet?.handle);
+        if (!found.item) {
+          const error = new Error(`${found.sawMenu ? 'menu_item_not_found' : 'menu_not_opened'}:${kind}`);
+          error.menuDebug = { ...(S.menuDebug?.() ?? { menus: 0, rendered: 0 }), items: found.items ?? [] };
+          throw error;
+        }
+        S.clickElement(found.item);
         if (kind === 'block') {
           const confirm = await S.waitFor(() => S.findConfirmButton(existingConfirms), { timeoutMs: 3000 });
           if (confirm) confirm.click();
@@ -364,20 +690,34 @@
         await S.waitFor(() => !S.getOpenMenu(), { timeoutMs: 2500 });
       }
       state.actions += 1;
+      state.lastActionError = null;
       audit('action', tweet, { accountAction: { ...decision.accountAction, executed: true } });
       updateBarNote(article, `已${kinds.includes('block') ? '拉黑' : '静音'} @${tweet.handle}`);
       return true;
     } catch (error) {
       state.errors += 1;
       acted.delete(dedupeKey); // 失败允许重试（例如菜单还没渲染出来）
+      cancelPendingEscape();
       pressEscape();
-      audit('action_failed', tweet, { accountAction: { ...decision.accountAction, executed: false }, error: String(error?.message ?? error) });
-      updateBarNote(article, `自动动作失败：${String(error?.message ?? error)}`);
+      const code = String(error?.message ?? error);
+      const debug = error?.menuDebug ?? S.menuDebug?.() ?? null;
+      state.lastActionError = { code, handle: tweet?.handle ?? '', at: Date.now(), menu: debug };
+      state.actionErrors.push(state.lastActionError);
+      if (state.actionErrors.length > 10) state.actionErrors.shift();
+      audit('action_failed', tweet, { accountAction: { ...decision.accountAction, executed: false }, error: code, menu: debug });
+      const retryLabel = state.settings?.action?.autoBlock ? '立即拉黑' : '立即静音';
+      updateBarNote(
+        article,
+        `自动动作失败：${humanActionError(code, kinds[kinds.length - 1])} · 可点「${retryLabel}」重试`,
+        debug,
+      );
       return false;
+    } finally {
+      restoreTrigger();
     }
   }
 
-  function updateBarNote(article, text) {
+  function updateBarNote(article, text, debug = null) {
     const bar = article?.querySelector(':scope > .jevx-bar');
     if (!bar) return;
     let note = bar.querySelector('.jevx-note');
@@ -387,6 +727,12 @@
       bar.appendChild(note);
     }
     note.textContent = text;
+    if (debug) {
+      const items = Array.isArray(debug.items) ? debug.items.filter(Boolean) : [];
+      note.title = items.length
+        ? `菜单里实际有：${items.join(' / ')}（菜单 ${debug.menus ?? 0} 个，其中可见 ${debug.rendered ?? 0} 个）`
+        : `点开菜单后没有读到任何菜单项（菜单 ${debug.menus ?? 0} 个，其中可见 ${debug.rendered ?? 0} 个）`;
+    }
   }
 
   /* ------------------------------- 主流程 ------------------------------- */
@@ -394,7 +740,13 @@
   function applyDecision(article, tweet, decision) {
     if (!state.settings?.enabled) return;
     const shouldHide = state.settings.action.hide && decision.band !== 'ignore';
-    if (shouldHide) hideArticle(article, tweet, decision);
+    if (shouldHide) {
+      hideArticle(article, tweet, decision);
+    } else {
+      // 纯增量呈现：α 徽标 + β 折叠条。两者都不改变隐藏判定，也不产生账号动作。
+      applyAlphaMark(article, decision);
+      applyBetaFold(article, tweet, decision);
+    }
 
     const action = decision.accountAction;
     if (!action || action.kind === 'none') return;
@@ -427,6 +779,9 @@
     if (key) state.hidden.delete(key);
     article.dataset.jevxHidden = '0';
     article.querySelectorAll(':scope > .jevx-bar').forEach((el) => el.remove());
+    // 节点被虚拟列表回收复用：β 折叠条与 α 徽标必须一起清掉，否则新推文会继承上一条的呈现。
+    clearBeta(article);
+    clearAlpha(article);
   }
 
   async function inspectArticle(article) {
@@ -572,6 +927,19 @@
     }, 1200);
   })();
 
+  /** 当前页面上带 β 折叠条 / α 徽标的推文数。展开后仍算「被 β 标记」，与 e2e 的 beta==='1' 口径一致。 */
+  function countBetaMarked() {
+    let count = 0;
+    for (const article of S.findTweets(document)) if (article.dataset.jevxBeta === '1') count += 1;
+    return count;
+  }
+
+  function countAlphaMarked() {
+    let count = 0;
+    for (const article of S.findTweets(document)) if (article.dataset.jevxAlpha === '1') count += 1;
+    return count;
+  }
+
   /** 供端到端测试与调试读取（只读）。 */
   globalThis.__jevxContent = {
     version: VERSION,
@@ -586,6 +954,10 @@
       bands: [...state.decisions.values()].reduce((acc, d) => ({ ...acc, [d.band]: (acc[d.band] ?? 0) + 1 }), {}),
       farmIndex: farmIndex.size,
       farmRetroHidden: state.farmRetroHidden ?? 0,
+      betaFolded: countBetaMarked(),
+      alphaMarked: countAlphaMarked(),
+      lastActionError: state.lastActionError ?? null,
+      actionErrors: state.actionErrors.slice(-10),
     }),
   };
 })();

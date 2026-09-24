@@ -18,6 +18,10 @@ const els = {
   autoMute: document.getElementById('autoMute'),
   muteOnHide: document.getElementById('muteOnHide'),
   dryRun: document.getElementById('dryRun'),
+  semBeta: document.getElementById('semBeta'),
+  semAlpha: document.getElementById('semAlpha'),
+  semNote: document.getElementById('sem-note'),
+  sem: document.getElementById('sem'),
   status: document.getElementById('status'),
   stats: document.getElementById('stats'),
   audit: document.getElementById('audit'),
@@ -47,6 +51,13 @@ async function refresh() {
   els.autoMute.checked = Boolean(state.settings.action.autoMute);
   els.muteOnHide.checked = Boolean(state.settings.action.muteOnHide);
   els.dryRun.checked = Boolean(state.settings.action.dryRun);
+  // α / β 只做「折叠展示」与「标记」，字段缺失时按默认开启显示。
+  els.semBeta.checked = state.settings.semantics?.beta?.enabled !== false;
+  els.semAlpha.checked = state.settings.semantics?.alpha?.enabled !== false;
+  els.semNote.textContent =
+    state.settings.semantics?.enabled === false
+      ? '语义整理总开关已在设置页关闭（1.6）；α / β 只折叠展示或标记，不影响隐藏与账号动作。'
+      : 'α / β 只折叠展示或标记，不影响隐藏与账号动作。';
   els.version.textContent = `v${state.version}`;
   els.status.textContent = state.apiError
     ? `模型未就绪：${state.apiError}`
@@ -86,6 +97,7 @@ async function refresh() {
 
   const s = state.stats ?? {};
   const bands = s.bands ?? {};
+  const sem = s.semantics ?? {};
   const cells = [
     ['已过滤', (bands.block ?? 0) + (bands.hide ?? 0) + (bands.review ?? 0)],
     ['已放行', bands.ignore ?? 0],
@@ -93,6 +105,8 @@ async function refresh() {
     ['预检命中', s.triageHits ?? 0],
     ['待动作', bands.block ?? 0],
     ['黑名单', state.blocklist?.total ?? 0],
+    ['β 折叠', sem.betaFolds ?? 0],
+    ['α 标记', sem.alphaHits ?? 0],
   ];
   els.stats.textContent = '';
   for (const [label, value] of cells) {
@@ -104,6 +118,10 @@ async function refresh() {
     box.append(strong, span);
     els.stats.appendChild(box);
   }
+
+  els.sem.textContent =
+    `β 折叠 ${sem.betaFolds ?? 0} · α 标记 ${sem.alphaHits ?? 0}` +
+    ` · 语义调用 ${sem.calls ?? 0} · 跳过 ${sem.skipped ?? 0} · 失败 ${sem.errors ?? 0}`;
 
   els.audit.textContent =
     (state.audit ?? [])
@@ -136,6 +154,16 @@ els.muteOnHide.addEventListener('change', async () => {
 
 els.dryRun.addEventListener('change', async () => {
   await send('JEVX_SET_SETTINGS', { patch: { action: { dryRun: els.dryRun.checked } } });
+  await refresh();
+});
+
+els.semBeta.addEventListener('change', async () => {
+  await send('JEVX_SET_SETTINGS', { patch: { semantics: { beta: { enabled: els.semBeta.checked } } } });
+  await refresh();
+});
+
+els.semAlpha.addEventListener('change', async () => {
+  await send('JEVX_SET_SETTINGS', { patch: { semantics: { alpha: { enabled: els.semAlpha.checked } } } });
   await refresh();
 });
 

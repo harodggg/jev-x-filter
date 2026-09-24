@@ -28,12 +28,24 @@
       <span>演练模式（只记录，不真的点菜单）</span>
     </label>
 
+    <div class="cats-title">语义整理（点一下立即生效）</div>
+    <label class="switch">
+      <input type="checkbox" id="semBeta" />
+      <span>折叠重复信息（β）<span class="muted"> 折叠展示，不隐藏</span></span>
+    </label>
+    <label class="switch">
+      <input type="checkbox" id="semAlpha" />
+      <span>标记特殊观点（α）<span class="muted"> 只标记，不隐藏</span></span>
+    </label>
+    <div id="sem-note" class="muted">α / β 只折叠展示或标记，不影响隐藏与账号动作。</div>
+
     <div class="cats-title">过滤类别（点一下立即生效）</div>
     <div id="cats" class="cats"></div>
 
     <div id="mode" class="status">读取中…</div>
     <div id="status" class="status">读取中…</div>
     <div id="stats" class="stats"></div>
+    <div id="sem" class="status">β 折叠 0 · α 标记 0</div>
 
     <div class="row">
       <button id="options" class="primary">打开设置</button>

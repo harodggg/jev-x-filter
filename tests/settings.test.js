@@ -53,6 +53,53 @@ test('白名单去重、去 @、小写化', () => {
   assert.deepEqual(s.whitelist.keywords, ['a', 'b']);
 });
 
+test('语义层默认值与冻结接口一致（α/β 只做展示，不影响判定）', () => {
+  const s = normalizeSettings(null);
+  assert.deepEqual(s.semantics, {
+    enabled: true,
+    reserveForFiltering: 50,
+    beta: { enabled: true, threshold: 0.7, maxCandidates: 6, windowSize: 60, foldInFeed: true, foldInReplies: true },
+    alpha: { enabled: true, onlyInReplies: true, threshold: 0.7, minReferences: 3, maxReferences: 12 },
+    maxPerMinute: 10,
+    maxPerDay: 300,
+  });
+});
+
+test('语义层设置被夹紧，且弹窗的局部 patch 不会清掉其它字段', () => {
+  const s = normalizeSettings({
+    semantics: {
+      enabled: 'yes',
+      reserveForFiltering: -5,
+      beta: { threshold: 9, maxCandidates: -3, windowSize: 999999, foldInFeed: 0 },
+      alpha: { threshold: -1, minReferences: 0, maxReferences: 2 },
+      maxPerMinute: 99999,
+      maxPerDay: 1.5,
+    },
+  });
+  assert.equal(s.semantics.enabled, true);
+  assert.equal(s.semantics.reserveForFiltering, 0);
+  assert.equal(s.semantics.beta.threshold, 1);
+  assert.equal(s.semantics.beta.maxCandidates, 0, '允许 0 = 本地不选候选');
+  assert.equal(s.semantics.beta.windowSize, 500);
+  assert.equal(s.semantics.beta.foldInFeed, false);
+  assert.equal(s.semantics.beta.foldInReplies, true, '未提供的字段保留默认');
+  assert.equal(s.semantics.alpha.threshold, 0);
+  assert.equal(s.semantics.alpha.minReferences, 1);
+  assert.equal(s.semantics.alpha.maxReferences, 2);
+  assert.equal(s.semantics.maxPerMinute, 600);
+  assert.equal(s.semantics.maxPerDay, 2);
+  // 参考上限被抬到不低于下限，否则 α 永远无法判定
+  const consistent = normalizeSettings({ semantics: { alpha: { minReferences: 5, maxReferences: 2 } } });
+  assert.equal(consistent.semantics.alpha.maxReferences, 5);
+
+  // 弹窗只 patch 一个开关时的形态（semantics.beta.enabled）
+  const patched = mergeKnown(normalizeSettings(null), { semantics: { beta: { enabled: false } } });
+  const merged = normalizeSettings(patched);
+  assert.equal(merged.semantics.beta.enabled, false);
+  assert.equal(merged.semantics.beta.threshold, 0.7, '其它 β 字段必须保留');
+  assert.equal(merged.semantics.alpha.enabled, true, 'α 不受影响');
+});
+
 test('path 始终以 / 开头，baseURL 去掉尾部斜杠', () => {
   const s = normalizeSettings({ api: { baseURL: 'https://x.test///', path: 'v1/systemone' } });
   assert.equal(s.api.baseURL, 'https://x.test');

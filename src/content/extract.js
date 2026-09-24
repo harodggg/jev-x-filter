@@ -15,6 +15,16 @@
   }
 
   /**
+   * 当前页面所属的推文 id：详情页 URL `/…/status/<id>` 里的数字。
+   * SW 用它把同一条推文下的回复归入同一上下文做 α（与评论区多数观点不同）判定；
+   * 不在详情页时为 null。注意这里只看 pathname，页面上的链接不算。
+   */
+  function threadId() {
+    const match = /\/status\/(\d{5,25})/.exec(location.pathname);
+    return match ? match[1] : null;
+  }
+
+  /**
    * @param {Element} article article[data-testid="tweet"]
    * @returns {object} 归一化推文
    */
@@ -25,6 +35,7 @@
     const handle = S.getHandle(article);
     return {
       id: S.getTweetId(article),
+      threadId: threadId(),
       handle,
       displayName: S.getDisplayName(article),
       text,

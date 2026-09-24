@@ -4,9 +4,9 @@
 
 ```bash
 npm run check     # 21 项静态自检（37 个 JS 文件语法检查）
-npm test          # 143 个单测
-npm run verify    # 真实 Chrome 端到端：76 项断言
-npm run package   # 打包 dist/jev-x-filter-0.3.1.zip
+npm test          # 228 个单测
+npm run verify    # 真实 Chrome 端到端：107 项断言
+npm run package   # 打包 dist/jev-x-filter-0.4.0.zip
 npm run all       # 顺序执行以上三步
 
 # 真实模型验证（Key 只从环境变量读，不写进任何文件）
@@ -27,7 +27,7 @@ JEV_API_KEY=xxx JEV_PRESET=typesafe node tools/live-check.js
 - **内容脚本确实是传统脚本**（出现 `import/export` 就报错，否则页面上会直接语法错误）
 - 所有 JS 通过 `node --check`（33 个文件）
 
-## 2. 单元测试（`tests/`，91 个，零依赖 `node --test`）
+## 2. 单元测试（`tests/`，228 个，零依赖 `node --test`）
 
 | 文件 | 覆盖 |
 | --- | --- |
@@ -35,6 +35,9 @@ JEV_API_KEY=xxx JEV_PRESET=typesafe node tools/live-check.js
 | `gate.test.js` | 四档闸门、边界值、**不变量 I1/I2**、动作规划（演练/预算/开关组合） |
 | `prefilter.test.js` | 中英强/弱特征、新闻语境降级、白名单、scope、超短无媒体、纯图/纯链接形态、全角与零宽字符归一化 |
 | `pipeline.test.js` | 完整流水线：0 请求跳过、缓存命中与阈值失效、预算耗尽、模型报错/答案残缺降级、图片佐证、并发去重、审计写入、统计口径 |
+| `semantics.test.js` | α/β 语义层：候选筛选（相似度/同线程/农场簇）、窗口身份（**缺 id 时用作者+文案哈希兜底**）、并发 `selfSeq` 边界、阈值与 `kind` 判定、α 优先于 β 折叠、超预算跳过、**不改变 `band`/`accountAction`** 的对照断言 |
+| `action-menu.test.js` | 菜单项文案识别表：多语言正例、**反义项优先**（`取消静音`/`Débloquer`/`Deixar de silenciar`/`Wyłącz wyciszenie`…）、不锚定行首（图标/bidi 控制符）、词边界不误命中、确认框文案 |
+| `menu-adversarial.test.js` | 独立对抗性验证（自带最小 DOM 打桩）：反义项排在目标前、不可见残留菜单、`pickFreshMenu` 快照语义、testid 与文案冲突必须跳过、**按 handle 过滤「静音错人」**、空/只有反义/只有无关项一律 null、`clickElement` 健壮性 |
 | `media.test.js` | 肤色像素判据、纯色块保护、风景误伤、OffscreenCanvas 流程（注入假运行时）、视觉适配器（关闭/请求体/不合规答案/HTTP 错误） |
 | `blocklist.test.js` | 账号规范化（@/URL/大小写/非法字符）、合并去重、四种导入格式、导出 round-trip、统计 |
 | `audit.test.js` | webhook 请求体约定、失败不阻塞、环形缓冲上限与清空、运行时改地址 |
@@ -63,8 +66,16 @@ JEV_API_KEY=xxx JEV_PRESET=typesafe node tools/live-check.js
 | 1001 | `内幕消息：跟随老师操作，月入十万，稳赚不赔，加V领取建仓表` | `block`（scam，欺骗证据）→ 武装模式下静音 |
 | 1002 | `不看后悔一辈子！删前速看，99%的人都不知道的真相` | `hide`（clickbait）——该类**不可动账号**，即使打开「隐藏档也静音」也只静音、永不拉黑 |
 
-陷阱：菜单里混入 `Unmute`/`Unblock` 反义项（且静音项不带 testid）；页面里预先存在一个文案为
-`Block` 的 `confirmationSheetConfirm`（X 会复用这个 testid）。
+陷阱（回应用户真站反馈累积出来的）：
+1. 菜单里混入 `Unmute`/`Unblock` 反义项（静音项在多数构建里**没有 testid**，只能按文案匹配）；
+2. 页面里预先存在一个文案为 `Block` 的 `confirmationSheetConfirm`（X 会复用这个 testid 到别的弹窗）；
+3. **DOM 里预先挂着一个关闭状态的残留 `Dropdown`**（`data-stale`，`display:none`），
+   里面的静音项写着**别的账号** —— 取「文档里第一个 Dropdown」就会静音错人；
+4. 菜单浮层**依赖触发按钮的 rect**：夹具照抄真站行为 —— `⋯` 按钮没有盒子就拒开菜单，
+   这正是真站 `自动动作失败：menu_item_not_found:mute` 的根因（隐藏后 `⋯` 的 rect 是 0×0）；
+5. 菜单项**异步渲染**（点击后 ~450ms 才出现），且静音项文案随语言变化
+   （西语 `Silenciar` + 反义 `Dejar de silenciar`；另一条只有 `data-testid="mute"`、文案不可匹配）；
+6. 一条推文的菜单里**确实没有**静音项 —— 实现必须失败并留下「菜单里有什么」的诊断，绝不猜点。
 
 54 项断言分七组：
 
@@ -81,8 +92,19 @@ JEV_API_KEY=xxx JEV_PRESET=typesafe node tools/live-check.js
    **不点页面里预先存在的同名确认框**、动作不重复、隐藏结果与场景 A 一致
 7. **场景 D（武装 + 隐藏档也静音）**：农场账号被静音；`review` 档（纯图/无关键词诱饵）仍然不动作；
    隐藏档静音不会升级为拉黑；页面无脚本异常
-8. **扩展页面**：设置页 44 字段 / 5 预设渲染完整、显示「模型就绪 · custom · jev-test」、
-   「测试连接」拿到类型化答案、弹窗 6 格统计与模型状态、黑名单自动记账 2 条 + 导入 2 条 + 导出包含全部账号、
+8. **场景 E（α / β 语义层）**：α 命中的回复带 `α` 徽标且**仍完整可见**；线程内语义相同的回复被 β 折叠
+   （代表条不折叠）；SW 统计里 `calls / candidateSets / alphaHits / betaFolds ≥ 1`（**在刚跑完场景 E 时读**，
+   因为设置页那次读取可能跨过 Service Worker 重启、内存计数归零）
+9. **场景 F（菜单自动化鲁棒性，真站 `menu_item_not_found:mute` 的回归）**：
+   ① 每次点 `⋯` 时触发按钮的 rect 都 > 0（`window.__menuCalls`，证明「隐藏后临时恢复可渲染」生效）；
+   ② 西语菜单项（含反义项）点的是静音；③ 只有 `data-testid="mute"`、文案不可匹配的项也能命中；
+   ④ 没有点到反义项；⑤ **没有点到残留菜单里的假条目**（`Mute @stale_ghost`）；
+   ⑥ 菜单里没有静音项时绝不猜点（关注/不感兴趣/拉黑都不点）；
+   ⑦ 失败提示是人话且给出「重试」指引，`title` 里带上菜单项清单；
+   ⑧ `summary().actionErrors` 里能查到 `menu_item_not_found:mute` 与其诊断
+10. **扩展页面**：设置页 81 字段 / 5 预设渲染完整、α/β 语义节 12 个字段、保存阈值后 SW 回读一致、
+   显示「模型就绪 · custom · jev-test」、「测试连接」拿到类型化答案、弹窗 8 格统计与模型状态、
+   弹窗 β 开关能真实翻转设置、黑名单自动记账 + 导入 2 条 + 导出包含全部账号、
    三个页面均无脚本异常
 
 ## 4. 本轮验证抓到的真实问题
@@ -108,11 +130,22 @@ JEV_API_KEY=xxx JEV_PRESET=typesafe node tools/live-check.js
 | **架构性漏检**：`比我好看的没我骚🔧👏比我骚的没我好看`（乱码账号名 `yrmyzhcxvlkzpu`）整条放行 —— 用户指出「没有通用性」 | 用户截图 + 本地复现（`score=0`） | 根因：「预筛命中才调用模型」＝ 关键词表即召回上限，词表外的写法模型永远看不到。新增**模型先行预检**（未命中也问一句 `bait` 单问；实测该样本 0.83，对照组 ≤0.18）；≥0.85 升级四问，≥0.70 隐藏成待确认且永不动作；另加「乱码账号名」弱特征与 `randomName` 展示；新增 4 个单测 + E2E 夹具 888 |
 | **真站漏检**：显示名 `🍑真实同城约p🍑主页联系🔞免费` + 正文「那一夜你没有拒绝我😭🤣不是人机」整条放行 | 用户截图反馈 + 本地复现（`score=0`，连候选都不是） | ① 预筛扫描范围加入显示名/卡片/alt 并单独计分；② 新增 `约p` 拉丁变体、`主页联系/看简介`、`🔞`、`不是人机` 规则；③ state 里 `display_name` 单独一行，问题描述明确要求把显示名算作可见内容；④ 显示名本身即色情引流 → 至少 `review`（仅隐藏，不动作）。真实模型复测：该样本 0.96/0.92、类别置信度 0.93 → `block` |
 
+### v0.4.0 这一轮（α/β + 动作健壮性）
+
+| 现象 | 根因 | 修复 |
+| --- | --- | --- |
+| **真站 `自动动作失败：menu_item_not_found:mute`**（用户截图） | 顺序是「先隐藏、再点 `⋯`」；隐藏手法是给推文子节点 `display:none`，`⋯` 也在其中 → 它的 `getBoundingClientRect()` 是 **0×0**；X 的菜单浮层用触发按钮的 rect 定位 → 菜单不渲染（或渲染到视口外）→ 永远找不到菜单项 | 动作期间让 `⋯`→`article` 的祖先链临时恢复 `display:block` + `visibility:hidden`，按钮 1px 离屏 `position:fixed`，点完逐条还原（内联 `!important` 压过样式表 `!important`）。端到端场景 B/F 断言每次点击时按钮 rect > 0；夹具照抄「trigger 没有盒子就拒开菜单」的真站行为，**去掉该补丁后场景 B/C/D/F 立刻失败**（对照实验） |
+| 菜单里明明有静音项，却点到**别的账号** | X 会把关闭过的 `Dropdown` 节点留在 DOM 里；`getOpenMenu()` 取「文档里第一个」，命中的是残留节点，而残留节点里的菜单项**还绑着上一个账号的处理函数** | ① 只认「点击后新出现（或从不可见变可见）」的菜单；② 不可见残留一律不接受（宁可失败重试）；③ 菜单项文案里写着别的 `@handle` 的项跳过；④ 端到端夹具专门放了 `data-stale` 残留菜单，取第一个 Dropdown 必中招 |
+| 静音项在部分语言/构建下**识别不到**，或被当成「取消静音」点反 | 旧实现用行首锚定（`^静音`，图标/双向控制符一挡就失配），且反义表只列固定短语（`Deixar de silenciar` / `Wyłącz wyciszenie` / `Deixa de silenciar` 都会命中静音词根） | `data-testid` 优先（`mute`/`muteLink`/`block`）+ 多语言表**不锚定行首** + 反义优先 + 「否定词 + 词根」结构护栏；`testid` 与文案方向冲突的项一律跳过（宁可不点）；新增 `action-menu.test.js`（10 组）与 dev 的 `menu-adversarial.test.js`（25 组）钉死 |
+| 失败提示只有 `menu_item_not_found:mute`，用户看不懂也不知道下一步 | 直接把内部错误码写进了判定条 | 人话提示「菜单里没有对应的静音/拉黑项（目标：静音） · 可点『立即静音』重试」，`title` 里给出「菜单里实际有：…」；审计事件带同一份诊断；`summary().actionErrors` 保留最近 10 次失败历史 |
+| **β（贝塔）在端到端里一次都不触发**（α 正常） | 内容脚本的 `getTweetId()` 只认 `/status/(\d{5,25})`，而端到端夹具的推文 id 是 3–4 位 → `tweet.id === null`；`pickBetaCandidates` 需要 `duplicateOf` 锚点，`!item.id` 的守卫把所有候选跳光（α 走 threadId 参考，不需要 id，所以照常命中） | ① 夹具补 `data-jevx-id`（真站雪花 id 场景本来就正常）；② SW 侧 `normalizeRecentEntry` 在缺 id 时用「作者 + 文案」稳定哈希 `h:<hash32>` 兜底，`duplicateOf` 仍有锚点 |
+| 端到端跑到第 7 组直接 `SyntaxError: Unexpected token '.'` | 求值脚本写在 Node 模板字符串里，单个反斜杠被吃掉：`/α\s*\/\s*β/` 到页面上变成 `/αs*/s*β/`；`PROBE` 里 `.replace(/\s+/g,' ')` 变成 `/s+/g`（文本不再折叠空白，断言输出全是换行） | 求值字符串里的正则一律写双反斜杠，`main()` 启动时自检 `PROBE.includes('\\s')`；`CDP.evaluate` 报错时带上出错表达式片段（否则只看到一个 SyntaxError 无法定位） |
+
 ## 5. 真实模型验证（`tools/live-check.js`，TypeSafe 官方网关实测）
 
-脚本调用 `createPipeline` —— 跑的就是扩展线上那条流水线（含预检与农场），不是另写一份逻辑。
+脚本调用 `createPipeline` —— 跑的就是扩展线上那条流水线（含预检、农场与 α/β 语义层），不是另写一份逻辑。
 实测环境：`POST https://api.typesafe.ai/v1/systemone`，模型 `jev-latest`（解析为 `jev-1.13.0`）。
-**22 条样本、22/22 符合设计，安全底线 0 违反**：
+**34 条样本、安全底线 0 违反、期望隐藏 0 未命中**：
 
 | 样本 | 档位 | 层级 | 关键概率 |
 | --- | --- | --- | --- |
@@ -129,7 +162,10 @@ JEV_API_KEY=xxx JEV_PRESET=typesafe node tools/live-check.js
 | 文案农场 #1 / #2 / #3 | #1 `ignore`，#2#3 `hide` | 预检 | bait 0.54 / 0.60 / 0.43 |
 | 日常 / 治理新闻 / 性教育 / 泳装 / 正常小性感 / 健身 | `ignore` | 四问或预检 | 对照 bait 0.01–0.19 |
 
-调用统计：23 次（预检 11 · 预检命中 3 · 升级四问 3），token 输入 14530 / 输出 1565。
+调用统计：49 次（预检 21 · 五问 17 · α/β 语义 11），token 输入 35834 / 输出 3566。
+按类型拆分：预检 21 次（输入 9544 / 输出 420）· 五问 17 次（输入 20392 / 输出 2816）· **α/β 语义 11 次（输入 5898 / 输出 330，单次约 536 输入 token）**。
+α/β 真机结论：**β 折叠 10 · α 标记 1 · 语义调用 11 · 跳过 0 · 失败 0**（β 相似度 0.99、α 分数 0.98）。
+> 测量方法修正：α/β 样本排在样本表后半段，而预检/判定/语义层共用每分钟 Jev 额度 —— 早期脚本没放宽额度，α/β 样本被整层跳过，看起来像「模型不支持 β」，其实是**测量方法**的问题；现在脚本把额度显式放宽（并受 `settings.js` 夹紧上限约束）。
 > 说明：样本里有多组「同一句文案」，所以它们会在农场维度互相聚类（真站它们本来就是同一批账号）。
 
 ## 6. 没被自动化覆盖的部分（诚实清单）
