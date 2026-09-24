@@ -141,9 +141,10 @@ export function createPipeline(deps) {
   /** 最近收到的推文输入（排障用：内容脚本到底抽到了什么 context / threadId / 文本）。 */
   const recentInputs = [];
   /**
-   * β 的本地分支：**情绪言论**（愤怒 / 喜悦 / 支持 / 反对 / 悲伤 / 确认 / 表情）的折叠计划。
+   * β 的本地分支：**低信息量附和**（愤怒 / 喜悦 / 支持 / 反对 / 悲伤 / 确认 / 表情 /
+   * 赞美 / 期待 / 问候 / 社交 / 参与）的折叠计划。
    * 0 次模型调用；纯展示，绝不参与 band / accountAction（不变量 I1）。
-   * 只对回复区生效（按键 threadId 归组），并尊重用户开关与折叠/隐藏模式。
+   * 回复区 / 详情页按 threadId **整条线程合并成一个组**，并尊重用户开关与折叠/隐藏模式。
    */
   function planLocalFold(tweet, observed, settings) {
     const sem = settings.semantics;
@@ -151,12 +152,19 @@ export function createPipeline(deps) {
     if (sem.emotion && sem.emotion.enabled === false) return null;
     // 兼容 v0.4.2 的旧开关（foldLowSignal）；新键是 semantics.emotion.*
     if (!sem.emotion && sem.beta?.foldLowSignal === false) return null;
-    // 回复区看 foldInReplies，时间线/推荐流看 foldInFeed（与模型版 β 的开关语义一致）。
-    const isReply = tweet?.context === 'reply';
-    if (isReply && sem.beta?.foldInReplies === false) return null;
-    if (!isReply && sem.beta?.foldInFeed === false) return null;
+    const target = observed ?? tweet;
+    // 详情页的主帖本身（id === threadId）永不被本地折叠 —— 那是用户正在读的那条推文。
+    if (target?.threadRoot) return null;
+    // v0.4.7：详情页 `/status/<id>` 里**所有** article 都带同一个 threadId。
+    // X 现在经常不渲染「回复」文案，`getContext()` 会把整页判成 timeline；
+    // 只按 context 判就会退化成「每条各自折叠」，得不到用户要的「合并成同一条」。
+    // 所以只要 threadId 非空就按线程语义处理（时间线 URL 没有 /status/，threadId 为空）。
+    const inThread = tweet?.context === 'reply' || Boolean(target?.threadId);
+    // 回复区 / 详情页看 foldInReplies，时间线/推荐流看 foldInFeed（与模型版 β 的开关语义一致）。
+    if (inThread && sem.beta?.foldInReplies === false) return null;
+    if (!inThread && sem.beta?.foldInFeed === false) return null;
     const mode = sem.emotion?.mode === 'hide' ? 'hide' : 'fold';
-    return planEmotionFold(observed ?? tweet, semanticRecent.list(), { mode, scope: isReply ? 'thread' : 'feed' });
+    return planEmotionFold(target, semanticRecent.list(), { mode, scope: inThread ? 'thread' : 'feed' });
   }
 
   const farmTracker = createFarmTracker();

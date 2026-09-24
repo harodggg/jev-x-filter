@@ -525,13 +525,14 @@ const emotionSettings = (patch = {}) => ({
   semantics: { ...DEFAULT_SETTINGS.semantics, enabled: true, emotion: { enabled: true, mode: 'fold', ...patch } },
 });
 
-test('情绪言论：同类第一条是代表条、第二条起折叠；不同类别互不影响', async () => {
+test('低信息量附和：整条线程只留最早一条代表，不同类别也合并（v0.4.7）', async () => {
   const { pipeline } = harness({ settingsPatch: emotionSettings() });
   const anger1 = await pipeline.decide(REPLY('a1', 'reply_a', '生气'));
   const anger2 = await pipeline.decide(REPLY('a2', 'reply_b', '太离谱了'));
   const joy = await pipeline.decide(REPLY('a3', 'reply_c', '哈哈哈'));
   const support = await pipeline.decide(REPLY('a4', 'reply_d', '支持'));
-  const argument = await pipeline.decide(REPLY('a5', 'reply_e', '我不同意，公开数据其实是反过来的，去年同类政策让成本涨了三成'));
+  const participation = await pipeline.decide(REPLY('a5', 'reply_e', '已三连！！！'));
+  const argument = await pipeline.decide(REPLY('a6', 'reply_f', '我不同意，公开数据其实是反过来的，去年同类政策让成本涨了三成'));
 
   assert.equal(anger1.beta?.kind, 'emotion');
   assert.equal(anger1.beta?.emotion, 'anger');
@@ -543,14 +544,24 @@ test('情绪言论：同类第一条是代表条、第二条起折叠；不同�
   assert.equal(anger2.beta?.duplicateOf, 'a1');
   assert.equal(anger2.beta?.groupSize, 2);
 
-  assert.equal(joy.beta?.emotion, 'joy');
-  assert.equal(joy.beta?.representative, true, '不同类别各自算代表条');
+  // v0.4.7：喜悦 / 支持 / 参与不再各算一条代表 —— 整条线程合并成一条。
+  assert.equal(joy.beta?.emotion, 'joy', '本条自己的类别仍然保留');
+  assert.equal(joy.beta?.representative, false, '不同类别合并到同一条代表上');
+  assert.equal(joy.beta?.folded, true);
+  assert.equal(joy.beta?.duplicateOf, 'a1');
   assert.equal(support.beta?.emotion, 'support');
-  assert.equal(argument.beta, null, '讲理由的回复不是情绪言论');
+  assert.equal(support.beta?.folded, true);
+  assert.equal(participation.beta?.emotion, 'participation');
+  assert.equal(participation.beta?.folded, true);
+  assert.equal(participation.beta?.groupSize, 5);
+  assert.equal(participation.beta?.merged, '低信息量附和');
+  assert.equal(participation.beta?.classBreakdown, '愤怒 2 · 喜悦 1 · 支持 1 · 参与 1');
+  assert.equal(participation.beta?.groupKey, anger1.beta?.groupKey, '整条线程共用一个组键');
+  assert.equal(argument.beta, null, '讲理由的回复不是低信息量附和');
 
-  for (const d of [anger1, anger2, joy, support, argument]) {
+  for (const d of [anger1, anger2, joy, support, participation, argument]) {
     assert.equal(d.band, 'ignore');
-    assert.equal(d.accountAction?.kind ?? 'none', 'none', '情绪折叠不产生账号动作');
+    assert.equal(d.accountAction?.kind ?? 'none', 'none', '折叠不产生账号动作');
   }
 });
 

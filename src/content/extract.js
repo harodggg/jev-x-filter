@@ -33,9 +33,14 @@
     const media = S.getMedia(article);
     const text = S.getText(article);
     const handle = S.getHandle(article);
+    const id = S.getTweetId(article);
+    const thread = threadId();
     return {
-      id: S.getTweetId(article),
-      threadId: threadId(),
+      id,
+      threadId: thread,
+      // 详情页里「被打开的那条主帖」：id 与 URL 里的 status id 相同。
+      // SW 用它保证主帖本身永远不会被本地低信息量折叠（那是用户正在读的内容）。
+      threadRoot: Boolean(id && thread && String(id) === String(thread)),
       handle,
       displayName: S.getDisplayName(article),
       text,

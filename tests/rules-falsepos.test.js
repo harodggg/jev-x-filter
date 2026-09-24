@@ -247,22 +247,25 @@ test('旧名兼容：classifyLowSignal 的映射不变', () => {
 // 线程用例必须显式带 context: 'reply'。
 const recentEntry = (id, text, seq, threadId = 't1') => ({ id, handle: `u${id}`, text, seq, ts: seq, threadId, context: 'reply' });
 
-test('fold：第一条是代表条（不折叠），后续同类折叠到最早的条目', () => {
-  const recent = [recentEntry('a', '支持', 1), recentEntry('b', '认同', 2)];
+test('fold：第一条是代表条（不折叠），后续任意类别都折叠到最早的条目', () => {
   const first = planEmotionFold(recentEntry('a', '支持', 1), [], { mode: 'fold' });
   assert.deepEqual(
     { representative: first.representative, folded: first.folded, duplicateOf: first.duplicateOf, groupSize: first.groupSize, kind: first.kind, emotion: first.emotion },
     { representative: true, folded: false, duplicateOf: null, groupSize: 1, kind: 'emotion', emotion: 'support' },
   );
 
-  const second = planEmotionFold(recentEntry('b', '认同', 2), [recentEntry('a', '支持', 1)], { mode: 'fold' });
+  // v0.4.7：线程内不再按类别分组 —— 不同类别（支持 + 喜悦）也合并到同一条代表
+  const second = planEmotionFold(recentEntry('b', '哈哈', 2), [recentEntry('a', '支持', 1)], { mode: 'fold' });
   assert.equal(second.representative, false);
   assert.equal(second.folded, true);
   assert.equal(second.duplicateOf, 'a');
   assert.equal(second.duplicateOfHandle, 'ua');
   assert.equal(second.groupSize, 2);
-  assert.equal(second.groupKey, 'em:t1:support');
-  assert.equal(second.emotionLabel, '支持');
+  assert.equal(second.groupKey, 'em:t1:low', 'v0.4.7 起 groupKey 是线程级单组，不含类别');
+  assert.equal(second.emotion, 'joy', '本条自己的类别仍然照实给出');
+  assert.equal(second.emotionLabel, '喜悦');
+  assert.equal(second.merged, '低信息量附和', '多条合并时给出总标签');
+  assert.deepEqual(second.classes, { support: 1, joy: 1 });
 });
 
 test('fold：只按比本条更早的观察顺序（seq）归组，乱序不影响代表条', () => {
@@ -273,26 +276,31 @@ test('fold：只按比本条更早的观察顺序（seq）归组，乱序不影�
   assert.equal(middle.folded, true, 'b 已经被 a 代表，应折叠');
 });
 
-test('不同线程 / 不同情绪类别不互相归组', () => {
+test('不同线程不互相归组；同线程不同类别合并到同一条代表', () => {
   const recent = [recentEntry('a', '支持', 1, 't1'), recentEntry('x', '支持', 2, 't2'), recentEntry('j', '哈哈', 3, 't1')];
 
-  // 另一个线程里没有更早的同类 → 不归组（其他线程的同类不能跨线程折叠它）
+  // 另一个线程里没有更早的附和 → 不归组（其他线程不能跨线程折叠它）
   const otherThread = planEmotionFold(recentEntry('y', '支持', 4, 't3'), recent, { mode: 'fold' });
   assert.equal(otherThread.groupSize, 1);
   assert.equal(otherThread.representative, true);
   assert.equal(otherThread.duplicateOf, null);
 
-  // 同线程但不同类别（悲伤 vs 支持/喜悦）→ 不归组
+  // v0.4.7：同线程不同类别（悲伤 vs 支持/喜悦）**应当合并**到同一条代表，但本条 emotion 仍照实给
   const otherClass = planEmotionFold(recentEntry('k', '难过', 5, 't1'), recent, { mode: 'fold' });
-  assert.equal(otherClass.groupKey, 'em:t1:sadness');
-  assert.equal(otherClass.groupSize, 1, '不同类别不互相折叠');
-  assert.equal(otherClass.representative, true);
+  assert.equal(otherClass.groupKey, 'em:t1:low', '线程级单组');
+  assert.equal(otherClass.groupSize, 3, '同线程不同类别也要合并');
+  assert.equal(otherClass.duplicateOf, 'a', '代表条是该线程最早的那条');
+  assert.equal(otherClass.folded, true);
+  assert.equal(otherClass.emotion, 'sadness', '本条自己的类别仍然正确');
+  assert.equal(otherClass.merged, '低信息量附和');
+  assert.deepEqual(otherClass.classes, { support: 1, joy: 1, sadness: 1 });
 
-  // 同线程同类别（喜悦）→ 归到 j
-  const sameClass = planEmotionFold(recentEntry('m', '哈哈', 6, 't1'), recent, { mode: 'fold' });
-  assert.equal(sameClass.groupSize, 2);
-  assert.equal(sameClass.duplicateOf, 'j');
+  // 同线程再来一条喜悦 → 归到同一条代表，组内合计 4（含上面那条悲伤）
+  const sameClass = planEmotionFold(recentEntry('m', '哈哈', 6, 't1'), [...recent, recentEntry('k', '难过', 5, 't1')], { mode: 'fold' });
+  assert.equal(sameClass.groupSize, 4);
+  assert.equal(sameClass.duplicateOf, 'a');
   assert.equal(sameClass.folded, true);
+  assert.equal(sameClass.emotion, 'joy');
 });
 
 test('hide 模式：同线程同类全部折叠（连代表条也不留）', () => {

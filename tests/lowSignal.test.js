@@ -67,7 +67,7 @@ test('情绪分类：空文本 / 纯标点不算情绪（孤立的问号是内�
   assert.equal(classifyEmotion('。。。'), null);
 });
 
-test('fold 模式：同类情绪第一条是代表条（挂徽标），第二条起折叠', () => {
+test('fold 模式：整条线程的低信息量附和只留最早一条当代表，其余（含不同类别）全部合并折叠', () => {
   const recent = [
     { id: 'a1', handle: 'r1', text: '生气', threadId: 'T1', seq: 1, ts: 1, context: 'reply' },
     { id: 'a2', handle: 'r2', text: '太离谱了', threadId: 'T1', seq: 2, ts: 2 },
@@ -84,13 +84,21 @@ test('fold 模式：同类情绪第一条是代表条（挂徽标），第二条
   assert.equal(second.emotion, 'anger');
   assert.equal(second.representative, false);
   assert.equal(second.folded, true);
-  assert.equal(second.duplicateOf, 'a1', '指向同类里最早的那条');
+  assert.equal(second.duplicateOf, 'a1', '指向线程里最早的那条');
   assert.equal(second.groupSize, 2);
   assert.equal(second.mode, 'fold');
 
+  // v0.4.7：`支持` 与 `愤怒` **不再各算一条代表** —— 整条线程合并成一条（用户：「折叠合并成同一条」）。
   const support = planEmotionFold({ id: 'a3', handle: 'r3', text: '支持', threadId: 'T1', seq: 3, context: 'reply' }, recent, { mode: 'fold' });
-  assert.equal(support.emotion, 'support');
-  assert.equal(support.representative, true, '不同类别各自算一条代表');
+  assert.equal(support.emotion, 'support', '本条自己的类别仍然保留');
+  assert.equal(support.emotionLabel, '支持');
+  assert.equal(support.representative, false, '不同类别也合并到同一条代表上');
+  assert.equal(support.folded, true);
+  assert.equal(support.duplicateOf, 'a1');
+  assert.equal(support.groupKey, first.groupKey, '整条线程一个组键（不再按类别分组）');
+  assert.equal(support.merged, '低信息量附和');
+  assert.deepEqual(support.classes, { anger: 2, support: 1 });
+  assert.equal(support.groupSize, 3);
 });
 
 test('hide 模式：全部折叠（用户说的「删除」），连代表条也不留', () => {
@@ -162,4 +170,68 @@ test('时间线（feed）范围：每条情绪言论各自折叠 + 标类别，�
 
   // 推荐流与时间线同属 feed
   assert.equal(planEmotionFold({ id: 't3', text: 'Gm', context: 'recommended', threadId: null, seq: 3 }, [], {}).scope, 'feed');
+});
+
+/**
+ * v0.4.7 —— 用户真站截图：一条活动帖下面的 6 条回复问「这些东西为什么不能折叠合并成同一条」。
+ * 修复前实测 6/6 分类为 null（参与句没有短语、赞美要求整串相等、`希望` 在实质词表里）。
+ */
+test('v0.4.7：用户截图的 6 条（赞美/参与/期待）全部命中并合并成 1 条代表', () => {
+  const screenshot = [
+    ['佳佳妹妹最好，最美！', 'praise'],
+    ['好事多磨，什么时候可以来一份', 'wish'],
+    ['已三连！！！', 'participation'],
+    ['这个活动好啊', 'praise'],
+    ['都来参加', 'participation'],
+    ['三连了，希望能中🙏', 'participation'],
+  ];
+  for (const [text, cls] of screenshot) {
+    assert.equal(classifyEmotion(text), cls, `${text} → ${classifyEmotion(text)}（期望 ${cls}）`);
+  }
+  assert.equal(EMOTION_CLASSES.participation.label, '参与');
+
+  const replies = screenshot.map(([text], i) => ({
+    id: `s${i + 1}`, handle: `u${i + 1}`, text, threadId: 'T9', seq: i + 1, ts: i + 1, context: 'reply',
+  }));
+  const plans = replies.map((target, i) => planEmotionFold(target, replies.slice(0, i), { mode: 'fold' }));
+  assert.equal(plans.filter((p) => p?.folded === false).length, 1, '整条线程只有 1 条代表条不折叠');
+  assert.equal(plans.filter((p) => p?.folded === true).length, 5, '其余 5 条折叠');
+  assert.equal(plans[0].representative, true);
+  assert.equal(new Set(plans.map((p) => p.groupKey)).size, 1, '6 条共用一个组键（不再按类别分组）');
+
+  const last = plans[5];
+  assert.equal(last.groupSize, 6);
+  assert.deepEqual(last.classes, { praise: 2, wish: 1, participation: 3 });
+  assert.equal(last.classBreakdown, '参与 3 · 赞美 2 · 期待 1');
+  assert.equal(last.merged, '低信息量附和');
+  assert.equal(last.emotion, 'participation', '本条自己的类别仍然保留');
+  assert.equal(last.duplicateOf, 's1');
+});
+
+test('v0.4.7：详情页主帖（id === threadId）不折叠，也不能当代表条', () => {
+  const root = { id: '1912345678901234567', handle: 'host', text: '都来参加', threadId: '1912345678901234567', seq: 1, ts: 1, context: 'timeline' };
+  const reply = { id: '1912345678901234999', handle: 'fan', text: '都来参加', threadId: '1912345678901234567', seq: 2, ts: 2, context: 'reply' };
+  assert.equal(planEmotionFold(root, [], { mode: 'fold' }), null, '主帖返回 null（永远不折叠）');
+  const plan = planEmotionFold(reply, [root], { mode: 'fold' });
+  assert.equal(plan.folded, false, '回复自己当代表条，而不是折到主帖上');
+  assert.equal(plan.duplicateOf, null);
+  assert.equal(plan.groupSize, 1);
+  assert.equal(plan.threadRoot ?? undefined, undefined);
+  // 内容脚本显式打了 threadRoot 标记时同样免疫
+  assert.equal(planEmotionFold({ ...reply, threadRoot: true }, [], { mode: 'fold' }), null);
+});
+
+test('v0.4.7：模板的误伤护栏（实质词前缀 / 最高级误用 / 反转句）', () => {
+  const mustNotFold = [
+    '成本太高可以来一份',
+    '这个价格什么时候可以来一份',
+    '最好别来',
+    '好人最好骗',
+    '大家最好注意',
+    '这期视频有意思，但我更想看上一期',
+    '这个活动好啊，但奖品只有一份太少了',
+    '三连了，但是视频第 3 分钟的数据错了',
+    '什么时候可以来一份活动规则说明',
+  ];
+  for (const text of mustNotFold) assert.equal(classifyEmotion(text), null, text);
 });

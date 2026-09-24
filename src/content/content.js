@@ -12,7 +12,7 @@
 
   const S = globalThis.JevXSelectors;
   const X = globalThis.JevXExtract;
-  const VERSION = '0.4.6';
+  const VERSION = '0.4.7';
 
   const state = {
     settings: null,
@@ -253,10 +253,20 @@
     bar.setAttribute('role', 'note');
 
     const label = resolveDuplicateLabel(beta);
-    // 情绪言论（愤怒 / 喜悦 / 支持 / 反对 / 悲伤 / 确认 / 表情）走同一套 β 折叠条，
-    // 但文案要说清「属于哪一类情绪」以及这是折叠还是隐藏 —— 这正是用户要的那份「信息」。
+    // 低信息量附和（愤怒 / 喜悦 / 支持 / 反对 / 赞美 / 期待 / 问候 / 社交 / 参与…）走同一套 β 折叠条，
+    // 但文案要说清「属于哪一类」以及这是折叠还是隐藏 —— 这正是用户要的那份「信息」。
     const isEmotion = beta?.kind === 'emotion';
-    const emotionTag = isEmotion ? `情绪 · ${beta?.emotionLabel ?? '情绪'}` : '';
+    // v0.4.7：整条线程的低信息量附和合并成一条 → 条上写清「本条类别」+「把多少条什么合并了」。
+    // 例：`情绪 · 参与（低信息量附和 6 条：参与 3 · 赞美 2 · 期待 1）`
+    const breakdown = String(beta?.classBreakdown ?? '').trim();
+    const merged = String(beta?.merged ?? '').trim();
+    const mergeSize = Number(beta?.groupSize);
+    const mergeTag = merged && Number.isFinite(mergeSize) && mergeSize > 1
+      ? `（${merged} ${mergeSize} 条${breakdown ? `：${breakdown}` : ''}）`
+      : '';
+    const emotionTag = isEmotion
+      ? `情绪 · ${beta?.emotionLabel ?? '情绪'}${mergeTag}`
+      : '';
     const isFeedEmotion = isEmotion && beta?.scope === 'feed';
     const isAgreement = beta?.kind === 'agreement';
     const sameText = isFeedEmotion
@@ -267,10 +277,12 @@
         })()
       : isEmotion
         ? label
-          ? `与 @${label} 的同类情绪回复相同`
+          ? `与 @${label} 的低信息量附和合并显示`
           : beta?.mode === 'hide'
-            ? '已隐藏（同线程同类情绪回复）'
-            : '与上一条同类情绪回复相同'
+            ? '已隐藏（同线程低信息量附和）'
+            : mergeSize > 1
+              ? '本线程低信息量附和已合并显示'
+              : '低信息量附和'
       : isAgreement
         ? label
           ? `与 @${label} 的同类附和（情绪/认同/确认）`

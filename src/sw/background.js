@@ -36,7 +36,7 @@ import {
 } from './settings.js';
 import { mergeKnown } from './util.js';
 
-export const VERSION = '0.4.6';
+export const VERSION = '0.4.7';
 
 /* ------------------------------- 运行时状态 ------------------------------- */
 

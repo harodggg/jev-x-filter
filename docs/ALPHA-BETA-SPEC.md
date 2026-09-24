@@ -643,12 +643,40 @@ REFERENCES:
   「情绪 · XX」徽标），其余折叠（`folded:true`，条上写「情绪 · XX：… 还有 N 条」，可展开）。
 - **AC-EMO2**：`hide` 模式（用户说的「删除」）下，**所有**情绪回复都 `folded:true` —— 一条都不显示内容，
   条上写明类别。
-- **AC-EMO3**：不同类别各自归组（2 条愤怒 + 2 条喜悦 → 两条代表 + 两条折叠），互不影响。
+- **AC-EMO3**（**v0.4.7 起被 AC-MERGE2 取代**）：~~不同类别各自归组（2 条愤怒 + 2 条喜悦 → 两条代表 + 两条折叠）~~
+  改为：整条线程的低信息量附和**合并成一组**，只留最早一条代表条（用户：「折叠合并成同一条」）。
 - **AC-EMO4（保守性）**：只有「归一化后 ≤12 字符且整串恰好是一句情绪短语」才算情绪；
   `我不同意，公开数据其实是反过来的`（讲理由）/ 疑问句 / 带数字或链接 / 超长文本**一律不折叠**。
-- **AC-EMO5（范围）**：只在回复区、同一 `threadId` 内生效；时间线不处理。代表条由 **seq（观察顺序）** 决定，
-  并发判定下不乱序。
+- **AC-EMO5（范围）**：只在回复区、同一 `threadId` 内生效（v0.4.5 起也覆盖时间线的逐条折叠）。代表条由 **seq（观察顺序）** 决定，
+  并发判定下不乱序；详情页主帖本身不折叠（v0.4.7 AC-MERGE6）。
 - **AC-EMO6（不影响判定）**：`band` / `accountAction` 与不带情绪层时**完全一致**（不变量 I1）；
   `semantics.emotion.enabled=false` 或旧键 `semantics.beta.foldLowSignal=false` 时新增产物为 0。
 
 验证：`tests/lowSignal.test.js`（8 组）、`tests/pipeline.test.js`（3 组集成）、端到端场景 H（fold + hide 共 13 项断言）。
+---
+
+## 附：v0.4.7 低信息量附和「合并成同一条」（Lead 追加，2026-09）
+
+用户真站截图：一条活动帖下连着 6 条回复，问「这些东西为什么不能折叠合并成同一条」。
+**实测根因：`classifyEmotion()` 对 6 条全部返回 null（6/6），所以一条都没折**；
+即使命中，旧组键 `em:<threadId>:<class>` 会给出 3 条代表条（赞美/期待/参与各一条）＝ 没合并。
+
+- **AC-MERGE1**：`已三连！！！` / `都来参加` / `三连了，希望能中🙏` → `emotion='participation'`（标签「参与」）；
+  `这个活动好啊` / `佳佳妹妹最好，最美！` → `praise`；`好事多磨，什么时候可以来一份` → `wish`。
+- **AC-MERGE2（合并）**：`scope=thread` 下**整条线程一个组键** `em:<threadId>:low`；
+  fold 模式只留**最早一条**代表条（`representative:true, folded:false`），其余不分类别全部 `folded:true`。
+- **AC-MERGE3（条上信息）**：`merged='低信息量附和'`、`classes` 类别人数、`classLabels`、
+  `classBreakdown`（如 `参与 3 · 赞美 2 · 期待 1`；人数降序 → 类别表声明顺序）；
+  `emotion` / `emotionLabel` **仍然报本条自己的类别**（v0.4.4 的细粒度信息不丢）。
+- **AC-MERGE4（保守性）**：模板整串锚定（`^…$`）、归一化 ≤14 字、无数字/链接；
+  自由前缀（≤4 字）命中 `不|没|别|成本|价格|数据|规则|为什么|…` 一律放弃 →
+  `成本太高可以来一份`、`最好别来`、`好人最好骗`、`大家最好注意`、`这个活动好啊，但奖品只有一份太少了`
+  都**不折叠**。
+- **AC-MERGE5（范围）**：`context==='reply'` 或 `threadId` 非空 → `scope=thread`；
+  时间线（threadId 为空）行为不变：每条各自折叠、不跨帖合并。
+- **AC-MERGE6（主帖免疫）**：详情页主帖（`id === threadId`，或内容脚本送的 `threadRoot`）
+  永不折叠、也不能当代表条。
+- **AC-MERGE7（不变量）**：合并只改展示层，`band` / `accountAction` 与不带情绪层时完全一致（I1）。
+
+验证：`tests/lowSignal.test.js`（12 组）、`tests/pipeline.test.js`（4 组集成）、
+独立对抗审计 `tests/emotion-merge-audit.test.js`、端到端场景 J（8 项断言）与场景 H（15 项断言）。
