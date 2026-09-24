@@ -78,7 +78,9 @@ img{width:80px;height:80px}[role=menuitem]{padding:8px;cursor:pointer}
   <!-- 真站漏检样本 2：正文与显示名都没有任何关键词（乱码账号名 + 性暗示自夸），
        只能靠预检（模型先行）捞出来 -->
   ${article('888', 'yrmyzhcxvlkzpu', '比我好看的没我骚🔧👏比我骚的没我好看', { displayName: 'yrmyzh cxvlu' })}
-  <!-- 真站样本 3：回复区里的文案农场（4 个账号同一分钟刷同一句，这里放 3 条触发阈值） -->
+  <!-- 真站样本 4：显示名写「处男免费」，正文用 emoji 拆字「处🐕男」规避关键字匹配 -->
+  ${article('999', 'czex7Jacquline', '祝你有美好的一天🟧处🐕男🚹恭喜 发财', { displayName: '不药而愈丶❤️处男免费❤️' })}
+  <!-- 真站样本 3：回复区里的文案农场（同一句被多个账号刷） -->
   ${article('901', 'ThomasTurnyysr', FARM_TEXT, { displayName: '靖柏🌸' })}
   ${article('902', 'TinaMysersyro', FARM_TEXT, { displayName: '夜蓉🌸' })}
   ${article('903', 'TimothyAndjqqx', FARM_TEXT, { displayName: '迎晴🌸' })}
@@ -142,6 +144,15 @@ function answersFor(state) {
       ...base,
       adult: { type: 'noul', noul: 0.04 },
       category: { type: 'choice', choice: 'ordinary', confidence: 0.93, probabilities: { ordinary: 0.93, other: 0.07 } },
+    };
+  }
+  if (/处男|破处|炮友/.test(s)) {
+    // 真站实测：adult 0.74 / 类别 adult_solicitation / 置信度 0.25 → 隐藏但不静音
+    return {
+      adult: { type: 'noul', noul: 0.74 },
+      solicitation: { type: 'noul', noul: 0.08 },
+      category: { type: 'choice', choice: 'adult_solicitation', confidence: 0.25, probabilities: { adult_solicitation: 0.25, suggestive: 0.4, ordinary: 0.35 } },
+      severity: { type: 'score', score: 2, confidence: 0.6, legend: {}, probabilities: {} },
     };
   }
   if (/同城约|onlyfans|escort|主页联系/i.test(s)) {
@@ -508,13 +519,13 @@ async function main() {
         async () => {
           const p = await pageA.cdp.evaluate(PROBE);
           const hidden = Object.values(p.articles).filter((a) => a.hidden).length;
-          return hidden >= 9 ? p : null;
+          return hidden >= 10 ? p : null;
         },
         { label: '场景 A 出现 3 条隐藏推文' },
       );
     } catch (error) {
       probeA = await pageA.cdp.evaluate(PROBE).catch(() => ({ articles: {}, actions: [] }));
-      check('场景 A 九条可疑推文被隐藏', false, String(error.message));
+      check('场景 A 十条可疑推文被隐藏', false, String(error.message));
     }
 
     const a = probeA.articles ?? {};
@@ -522,7 +533,12 @@ async function main() {
     check('黄推（英文 escort）被隐藏', a['333']?.hidden === true, `band=${a['333']?.band}`);
     check('图片佐证 + 弱文案 被隐藏（I1：不升级为账号动作）', a['666']?.hidden === true, `band=${a['666']?.band}`);
     check(
-      '文案农场三条全部隐藏（含被追溯隐藏的前两条）',
+      'emoji 拆字（处🐕男）+ 显示名黑话（处男免费）被隐藏为「待确认」',
+      a['999']?.hidden === true && a['999']?.band === 'hide',
+      `band=${a['999']?.band}`,
+    );
+    check(
+      '文案农场全部隐藏（含被追溯隐藏的更早条目）',
       a['901']?.hidden === true && a['902']?.hidden === true && a['903']?.hidden === true,
       `901=${a['901']?.band}/${a['901']?.source} 902=${a['902']?.band} 903=${a['903']?.band}`,
     );
@@ -571,6 +587,10 @@ async function main() {
       probeCalls.some((r) => String(r.body.state).includes('比我骚')) && fullCalls.some((r) => String(r.body.state).includes('比我骚')),
     );
     check(
+      'emoji 拆字样本走的是完整四问（去符号后预筛命中了关键词，不再依赖预检）',
+      fullCalls.some((r) => String(r.body.state).includes('处')),
+    );
+    check(
       '农场文案（bait 0.54 < 升级线）只走预检，不升级',
       probeCalls.some((r) => String(r.body.state).includes('玩的开了')) && !fullCalls.some((r) => String(r.body.state).includes('玩的开了')),
     );
@@ -612,7 +632,7 @@ async function main() {
         async () => {
           const p = await pageB.cdp.evaluate(PROBE);
           const hidden = Object.values(p.articles).filter((x) => x.hidden).length;
-          return hidden >= 9 && p.actions.length >= 3 ? p : null;
+          return hidden >= 10 && p.actions.length >= 3 ? p : null;
         },
         { label: '场景 B 隐藏 3 条并执行 2 次静音' },
       );
@@ -622,7 +642,7 @@ async function main() {
     }
     const b = probeB.articles ?? {};
     const actionsB = probeB.actions ?? [];
-    check('IntersectionObserver 路径生效（视口内推文被隐藏）', Object.values(b).filter((x) => x.hidden).length >= 9, `hidden=${Object.values(b).filter((x) => x.hidden).length}`);
+    check('IntersectionObserver 路径生效（视口内推文被隐藏）', Object.values(b).filter((x) => x.hidden).length >= 10, `hidden=${Object.values(b).filter((x) => x.hidden).length}`);
     check(
       '自动静音点中了正确的账号（含显示名引流账号）',
       ['spammer1', 'escort4', 'JesseAlvarl3'].every((h) => actionsB.some((x) => x.kind === 'mute' && x.handle === h)),
@@ -658,7 +678,7 @@ async function main() {
           const p = await pageC.cdp.evaluate(PROBE);
           const hidden = Object.values(p.articles).filter((x) => x.hidden).length;
           const blocked = p.actions.filter((x) => x.kind === 'block').length;
-          return hidden >= 9 && blocked >= 3 ? p : null;
+          return hidden >= 10 && blocked >= 3 ? p : null;
         },
         { label: '场景 C 完成拉黑' },
       );
@@ -672,7 +692,7 @@ async function main() {
     check('拉黑动作没有重复执行', actionsC.filter((x) => x.kind === 'block').length === 3, `block=${actionsC.filter((x) => x.kind === 'block').length}`);
     check('没有点到菜单里的反义项（Unmute/Unblock）', !actionsC.some((x) => String(x.kind).startsWith('un')), JSON.stringify(actionsC));
     check('没有点到页面里预先存在的确认按钮（X 复用 testid 的陷阱）', !actionsC.some((x) => x.kind === 'decoy-click'), JSON.stringify(actionsC));
-    check('场景 C 隐藏结果与场景 A 一致', Object.values(probeC.articles ?? {}).filter((x) => x.hidden).length >= 9, `hidden=${Object.values(probeC.articles ?? {}).filter((x) => x.hidden).length}`);
+    check('场景 C 隐藏结果与场景 A 一致', Object.values(probeC.articles ?? {}).filter((x) => x.hidden).length >= 10, `hidden=${Object.values(probeC.articles ?? {}).filter((x) => x.hidden).length}`);
     check('场景 C 页面无脚本异常', pageC.errors.length === 0, pageC.errors.slice(0, 2).join(' | '));
 
     // ---- 6c. 场景 D：武装 + 「隐藏档也静音」（验证新开关的边界） ----

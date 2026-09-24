@@ -62,6 +62,12 @@ export const STRONG_RULES = [
 export const WEAK_RULES = [
   { id: 'zh_weak_resource', label: '资源/福利/免费看', pattern: /资源|福利|免费看|免费领|私密|真人|在线看|激情|情色|成人/ },
   { id: 'zh_weak_teen', label: '学生妹/极品/网红', pattern: /学生妹|极品|网红|空姐|护士|模特/ },
+  {
+    id: 'zh_solicit_weak_slang',
+    label: '处男/破处/炮友/女大 等交易黑话',
+    // 真站样本：「处男免费」写在显示名里，正文是「祝你有美好的一天🟧处🐕男🚹恭喜 发财」
+    pattern: /处男|破处|处女|炮友|女大|包夜|空降|免费处/,
+  },
   { id: 'zh_anti_bot', label: '反检测话术（不是人机/真人可约）', pattern: /不是人机|非机器人|真人可约|真人服务|不是机器人|本人(?:在线|可约)|不是ai/ },
   { id: 'emoji_adult', label: '🔞 成人标记', pattern: /🔞/ },
   { id: 'en_weak_18', label: '18+/explicit 暗示', pattern: /\b18\+|explicit|\buncensored\b|\bfull\s*video\b|\bprivate\s*show\b/i },
@@ -95,6 +101,22 @@ export function looksRandomName(handle, displayName) {
 /** 纯转推/纯链接、没有实质文案的形态。 */
 export const LINK_ONLY = /^(?:https?:\/\/\S+\s*)+$/;
 
+/**
+ * 去符号（「密集化」）：删掉 emoji / 图形 / 符号 / 空白，只留中文、假名与字母数字。
+ *
+ * 为什么需要它：真站样本用 `处🐕男`、`处🔪男` 这种「关键字中间插 emoji」的方式规避匹配
+ * （显示名里老老实实写着 `❤️处男免费❤️`）。只看原文本会得到 score=0 —— 连候选都不是。
+ * 所以规则同时对**原文**和**去符号后的密集文本**匹配，插字符、拆字、换标点都无效。
+ */
+export function stripSymbols(text) {
+  return String(text ?? '')
+    .normalize('NFKC')
+    .replace(/[\u200b-\u200f\u2028-\u202e\u2060\ufeff]/g, '')
+    .replace(/[\u{1f000}-\u{1faff}\u{2190}-\u{2bff}\ufe0f\u20e3\u2122\u2139]/gu, '')
+    .replace(/[^\u3400-\u9fff\u3040-\u30ffa-z0-9]/g, '')
+    .toLowerCase();
+}
+
 /** NFKC + 小写 + 去零宽字符 + 压缩空白：让“约 啪”“𝐎𝐧𝐥𝐲𝐅𝐚𝐧𝐬”这类变体也能命中。 */
 export function normalizeText(text) {
   return String(text ?? '')
@@ -103,6 +125,17 @@ export function normalizeText(text) {
     .toLowerCase()
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * 对同一段内容跑两遍（原文 + 去符号），按规则 id 合并。
+ * 这样「插 emoji 拆字」与「正常写法」的命中结果一致，而不会对同一条规则重复计分。
+ */
+function matchRulesBoth(raw, dense, { rules, weight, newsContext }) {
+  const seen = new Map();
+  for (const hit of matchRules(raw, { rules, weight, newsContext })) seen.set(hit.id, hit);
+  for (const hit of matchRules(dense, { rules, weight, newsContext })) if (!seen.has(hit.id)) seen.set(hit.id, hit);
+  return [...seen.values()];
 }
 
 function testRule(rule, text) {
@@ -137,6 +170,10 @@ export function preScreen(tweet, settings) {
   const text = normalizeText(tweet?.text ?? '');
   const nameText = normalizeText(tweet?.displayName ?? '');
   const extraText = normalizeText([tweet?.cardText, tweet?.altText].filter(Boolean).join(' '));
+  // 去符号后的密集文本：对抗「关键字中间插 emoji」的规避（真站：处🐕男 / 处🔪男）
+  const textDense = stripSymbols(tweet?.text ?? '');
+  const nameDense = stripSymbols(tweet?.displayName ?? '');
+  const extraDense = stripSymbols([tweet?.cardText, tweet?.altText].filter(Boolean).join(' '));
   const hasMedia = Boolean(tweet?.media?.length) || Boolean(tweet?.hasMedia);
   const context = tweet?.context ?? 'timeline';
 
@@ -182,16 +219,26 @@ export function preScreen(tweet, settings) {
   // 新闻语境只看正文：账号名里写「警方」不该把名字上的垃圾特征洗白。
   result.newsContext = NEWS_CONTEXT.test(text);
 
-  const nameHits = matchRules(nameText, { rules: STRONG_RULES, weight: 3, newsContext: false });
-  const bodyHits = matchRules(text, { rules: STRONG_RULES, weight: 3, newsContext: result.newsContext });
-  const extraHits = matchRules(extraText, { rules: STRONG_RULES, weight: 3, newsContext: false });
+  const strongOpts = { rules: STRONG_RULES, weight: 3, newsContext: false };
+  const nameHits = matchRulesBoth(nameText, nameDense, strongOpts);
+  const bodyHits = matchRulesBoth(text, textDense, { ...strongOpts, newsContext: result.newsContext });
+  const extraHits = matchRulesBoth(extraText, extraDense, strongOpts);
+  // 弱特征按「显示名 / 正文（含卡片与 alt）」分开计分：
+  // 同一句黑话同时出现在显示名和正文里，是两个独立信号，应该各算一次（真站农场正是这样）。
+  const weakOpts = { rules: WEAK_RULES, weight: 1, newsContext: false };
+  const nameWeak = matchRulesBoth(nameText, nameDense, weakOpts);
+  const bodyWeak = [
+    ...matchRulesBoth(text, textDense, weakOpts),
+    ...matchRulesBoth(extraText, extraDense, weakOpts),
+  ];
   const weakHits = [
-    ...matchRules([nameText, extraText, text].filter(Boolean).join(' \n '), { rules: WEAK_RULES, weight: 1 }),
+    ...nameWeak,
+    ...bodyWeak,
     ...(randomNameInfo.random ? [{ id: 'random_name', label: '账号名疑似随机串（机器人特征）', sexual: false, weight: 1 }] : []),
   ];
   const strongHits = [...nameHits, ...bodyHits, ...extraHits];
 
-  result.nameReasons = [...new Set(nameHits.map((h) => h.id))];
+  result.nameReasons = [...new Set([...nameHits, ...nameWeak].map((h) => h.id))];
   result.strongNameHit = nameHits.some((h) => h.sexual);
 
   const minLen = settings?.scope?.minTextLength ?? 4;

@@ -16,14 +16,15 @@ test('太短的内容不参与农场判定（避免大众短语误伤）', () =>
   assert.ok(farmKey('应该没人比我玩的开了吧我福不黑不信你看'));
 });
 
-test('农场：同一段文案被 3 个不同账号发出才算命中；同账号重复不算', () => {
-  const tracker = createFarmTracker({ minAccounts: 3, windowMs: 60000, now: () => 0 });
+test('农场：默认 2 个不同账号即命中；同账号重复不算', () => {
+  const tracker = createFarmTracker({ windowMs: 60000, now: () => 0 });
   const text = '太阳射☀️不进去的地方💪你可以';
   assert.equal(tracker.record(text, 'lisa82am4', { nowMs: 1000 }).hit, false);
   assert.equal(tracker.record(text, 'lisa82am4', { nowMs: 2000 }).hit, false, '同账号重复不算新账号');
-  assert.equal(tracker.record(text, 'marie61ff2', { nowMs: 3000 }).hit, false);
+  const second = tracker.record(text, 'marie61ff2', { nowMs: 3000 });
+  assert.equal(second.hit, true, '默认阈值是 2 个不同账号');
+  assert.equal(second.accounts, 2);
   const third = tracker.record(text, 'lori73sv6', { nowMs: 4000 });
-  assert.equal(third.hit, true);
   assert.equal(third.accounts, 3);
 });
 
@@ -33,6 +34,12 @@ test('农场：窗口外的时间戳被淘汰，不会把隔天的话算成一�
   tracker.record('应该没人比我玩的开了吧我福不黑不信你看', 'b', { nowMs: 1000 });
   const late = tracker.record('应该没人比我玩的开了吧我福不黑不信你看', 'c', { nowMs: 100000 });
   assert.equal(late.hit, false, 'a/b 已过期，只剩 c');
+});
+
+test('农场：2 个账号时也要求内容够长（短句不参与）', () => {
+  const tracker = createFarmTracker({ windowMs: 60000 });
+  assert.equal(tracker.record('好的', 'a', { nowMs: 0 }).hit, false, '短句没有农场键');
+  assert.equal(tracker.record('好的', 'b', { nowMs: 10 }).hit, false);
 });
 
 test('农场：命中后不会重复计数，配置可热更新', () => {

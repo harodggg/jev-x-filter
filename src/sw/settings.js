@@ -133,7 +133,12 @@ export const DEFAULT_SETTINGS = {
   farm: {
     enabled: true,
     windowMs: 1800000,
-    minAccounts: 3,
+    /**
+     * 2 个不同账号发同一段（归一化后）无实质内容的话就算农场。
+     * 为什么敢降到 2：动手前还要求至少一条色情/诱饵/本地信号（见 gate 的 farm_repeat 规则），
+     * 「两个人恰好发了同一句长句 + 其中还有黑话」几乎只有协同账号才会发生。
+     */
+    minAccounts: 2,
   },
   /**
    * 预检（模型先行，解决「关键词表就是召回上限」）：
@@ -228,7 +233,7 @@ export function normalizeSettings(raw) {
 
   s.farm.enabled = Boolean(s.farm.enabled);
   s.farm.windowMs = clampInt(s.farm.windowMs, 60000, 86400000, 1800000);
-  s.farm.minAccounts = clampInt(s.farm.minAccounts, 2, 20, 3);
+  s.farm.minAccounts = clampInt(s.farm.minAccounts, 2, 20, 2);
 
   s.triage.enabled = Boolean(s.triage.enabled);
   s.triage.sampleRate = clampNumber(s.triage.sampleRate, 0, 1, 1);

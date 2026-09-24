@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "黄推过滤器 · Jev",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "用 Jev（TypeSafe System One 类型化决策）在本地判定 x.com 时间线/回复/推荐流中的色情推广，高置信度自动静音/拉黑，支持黑名单导入导出。",
   "minimum_chrome_version": "120",
   "icons": {

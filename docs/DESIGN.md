@@ -35,11 +35,15 @@
 `triage.sampleRate`、`triage.maxPerMinute`、`triage.maxPerDay` 控制总量；关掉 `triage.enabled`
 就回到 0 请求模式。真实网关实测：骚式自夸 0.83，对照组 ≤0.18，阈值 0.70 余量充足。
 
-不依赖词表的本地信号还有三个：
+不依赖词表的本地信号有四个（外加一个对抗手段）：
 
 - **乱码账号名**：元音比例 <0.22 或连续辅音 ≥5（`yrmyzhcxvlkzpu`），只算 +1 弱特征。
 - **显示名自身即色情引流**（`strongNameHit` → 最多 `review`）。
-- **文案农场**（`src/sw/farm.js`）：同一段无实质内容的话被 ≥3 个不同账号在 30 分钟内复制 → `hide`。
+- **去符号匹配**（`stripSymbols`）：规则同时对原文与「删掉 emoji/符号/空白后的密集文本」匹配，
+  用来对抗「关键字中间插 emoji」的规避（真站：`处🐕男` 实际写的是 `处男`）。
+  弱特征还按「显示名 / 正文」分开计分 —— 同一句黑话出现在两处是两个独立信号。
+- **文案农场**（`src/sw/farm.js`）：同一段无实质内容的话被 ≥2 个不同账号在 30 分钟内复制 → `hide`
+  （动手前仍要求至少一条色情/诱饵/本地信号）。
   它是对「单条内容谁都拿不准」的补刀：真站样本单条诱饵概率只有 0.47–0.54，凑够账号数就成立。
   归一只保留中文/字母数字（换 emoji、标点、大小写无效），短于 10 个有效字符不参与。
   命中时流水线返回 `farm`，内容脚本按同一归一化键把**更早出现、当时判放行**的那几条一并隐藏（纯展示层，
@@ -164,7 +168,7 @@ User-Agent: jev-systemone/0.1.1   ← 浏览器是受限请求头，会被 Chrom
 | 配额 | 默认 | 作用 |
 | --- | --- | --- |
 | `triage.maxPerMinute` / `maxPerDay` / `sampleRate` | 20 / 600 / 1 | 预检总量控制；关掉 `triage.enabled` 即 0 请求模式 |
-| `farm.windowMs` / `minAccounts` | 30 分钟 / 3 | 农场判定窗口与账号数阈值 |
+| `farm.windowMs` / `minAccounts` | 30 分钟 / 2 | 农场判定窗口与账号数阈值 |
 | `maxJevPerMinute` / `maxJevPerDay` | 30 / 800 | 超限 → 降级 `review`（有本地信号）或放行；真实模型实测 0.36–1.3 s/条，8 条样本 6133 输入 token |
 | `maxMediaPerMinute` | 60 | 图片分析限流 |
 | `concurrency` | 3 | 流水线并发（内容脚本侧还有 IntersectionObserver 与去抖） |

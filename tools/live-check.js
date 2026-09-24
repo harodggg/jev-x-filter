@@ -134,6 +134,30 @@ const SAMPLES = [
     expect: 'expectHidden',
   },
   {
+    name: '处男免费农场#1（emoji 拆字）',
+    tweet: {
+      id: 's16',
+      handle: 'czex7Jacquline',
+      displayName: '不药而愈丶❤️处男免费❤️',
+      text: '祝你有美好的一天🟧处🐕男🚹恭喜 发财',
+      media: [],
+      context: 'reply',
+    },
+    expect: 'expectHidden',
+  },
+  {
+    name: '处男免费农场#2（同文案）',
+    tweet: {
+      id: 's17',
+      handle: 'KhadijahLo9err',
+      displayName: 'ヾ、 秂鴇銘❤️处男免费❤️',
+      text: '祝你有美好的一天🐊处🔪男恭喜 发财',
+      media: [],
+      context: 'reply',
+    },
+    expect: 'expectHidden',
+  },
+  {
     name: '主页匹配家族（正文无害）',
     tweet: {
       id: 's15',
@@ -181,8 +205,9 @@ const SAMPLES = [
   },
   {
     name: '农场#2（同文案）',
+    // 阈值是 2 个账号：第二条就成立（#1 当时只有 1 个账号，所以放行）
     tweet: { id: 'fs2', handle: 'TinaMysersyro', displayName: '夜蓉🌸', text: '应该没人比我玩的开了吧🤣💖我福不黑不信你看', media: [], context: 'reply' },
-    expect: 'mustNotHide',
+    expect: 'expectHidden',
   },
   {
     name: '农场#3（同文案）',

@@ -171,3 +171,38 @@ test('「主页匹配/无套路匹配」话术（真站农场固定文案）直�
   assert.equal(hit.candidate, true);
   assert.ok(hit.nameReasons.includes('zh_profile_contact'), JSON.stringify(hit.nameReasons));
 });
+
+test('emoji 拆字规避：去符号后仍能命中（真站：处🐕男 / 处🔪男）', async () => {
+  const { stripSymbols } = await import('../src/sw/prefilter.js');
+  assert.equal(stripSymbols('祝你有美好的一天🟧处🐕男🚹恭喜 发财'), '祝你有美好的一天处男恭喜发财');
+  assert.equal(stripSymbols('约　啪！'), '约啪');
+
+  const hit = preScreen(
+    tweet({
+      handle: 'czex7Jacquline',
+      displayName: '不药而愈丶❤️处男免费❤️',
+      text: '祝你有美好的一天🟧处🐕男🚹恭喜 发财',
+    }),
+    settings,
+  );
+  assert.equal(hit.candidate, true);
+  assert.ok(hit.reasons.includes('zh_solicit_weak_slang'));
+  assert.equal(hit.score, 2, '显示名与正文各算一次弱特征');
+});
+
+test('同一句黑话同时出现在显示名与正文里 → 两分（两个独立信号）', () => {
+  const both = preScreen(tweet({ displayName: '处男免费', text: '处男免费来聊' }), settings);
+  assert.equal(both.score, 2);
+  assert.equal(both.candidate, true);
+  const onlyBody = preScreen(tweet({ displayName: '小明', text: '处男免费来聊' }), settings);
+  assert.equal(onlyBody.score, 1, '只有正文命中时不算候选');
+  assert.equal(onlyBody.candidate, false);
+});
+
+test('去符号不会让普通内容变成候选', async () => {
+  const { stripSymbols } = await import('../src/sw/prefilter.js');
+  assert.equal(stripSymbols('今天天气不错，我们一起去公园散步吧🌤️'), '今天天气不错我们一起去公园散步吧');
+  const hit = preScreen(tweet({ displayName: '小明🌤️', text: '今天天气不错，我们一起去公园散步吧🌤️' }), settings);
+  assert.equal(hit.candidate, false);
+  assert.equal(hit.score, 0);
+});

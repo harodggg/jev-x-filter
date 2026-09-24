@@ -10,6 +10,8 @@
  * - 归一到「只留 CJK 与字母数字」，去掉 emoji、标点、大小写、空白 —— 换 emoji/标点是刷屏者最常用的规避；
  * - 只统计**不同账号**（同一账号重复转发不算农场）；
  * - 内容太短（<10 个有效字符）不参与，避免「哈哈」「太好了」这种大众短语造成误伤；
+ * - 默认 **2 个不同账号**即视为农场（生产里由 settings.farm.minAccounts 覆盖）：
+ *   动手前 gate 还要求至少一条色情/诱饵/本地信号，所以「两个人恰好发同一句长句」不会误伤；
  * - 命中后只给 `hide` 档（可被用户的「隐藏档也静音」开关放大），绝不单独触发 block。
  */
 
@@ -35,7 +37,7 @@ export function farmKey(text) {
 export function createFarmTracker(options = {}) {
   const {
     windowMs = options.windowMs ?? 1800000, // 30 分钟
-    minAccounts = options.minAccounts ?? 3,
+    minAccounts = options.minAccounts ?? 2,
     maxKeys = options.maxKeys ?? 500,
     now = () => Date.now(),
   } = options;

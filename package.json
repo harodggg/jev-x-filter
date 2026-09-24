@@ -1,6 +1,6 @@
 {
   "name": "jev-x-filter",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "黄推过滤器（Jev 判定）——Chrome MV3 扩展：用 TypeSafe Jev / System One 的类型化决策过滤 x.com 上的色情推广内容",

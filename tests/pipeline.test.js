@@ -414,20 +414,50 @@ test('真站漏检样本回归：正文无害、引流在显示名 → 至少隐
   assert.equal(confirmedDecision.accountAction.kind, 'mute');
 });
 
-test('文案农场：同一段文案被 3 个账号刷出 → 第三条起隐藏并打上 farm 标记', async () => {
+test('文案农场：同一段文案被 2 个账号刷出 → 第二条起隐藏并打上 farm 标记', async () => {
   const { pipeline } = harness({ answers: scriptedAnswers({ bait: 0.54 }) });
   const base = { displayName: '靖柏🌸', text: '应该没人比我玩的开了吧🤣💖我福不黑不信你看', media: [], context: 'reply' };
   const d1 = await pipeline.decide({ ...base, id: 'f1', handle: 'ThomasTurnyysr' });
   const d2 = await pipeline.decide({ ...base, id: 'f2', handle: 'TinaMysersyro' });
   const d3 = await pipeline.decide({ ...base, id: 'f3', handle: 'TimothyAndjqqx' });
   assert.equal(d1.band, 'ignore', '第一条时农场还不成立（模型也说不确定 0.54）');
-  assert.equal(d2.band, 'ignore');
+  assert.equal(d2.band, 'hide', '两个账号发同一段长文案即成立');
+  assert.ok(d2.reasons.includes('farm_repeat'));
+  assert.equal(d2.farm.hit, true);
+  assert.equal(d2.farm.accounts, 2);
   assert.equal(d3.band, 'hide');
-  assert.ok(d3.reasons.includes('farm_repeat'));
-  assert.equal(d3.farm.hit, true);
   assert.equal(d3.farm.accounts, 3);
   assert.equal(d3.accountAction.kind, 'none', '默认不因农场静音');
-  assert.equal(pipeline.stats().farmHits, 1);
+  assert.equal(pipeline.stats().farmHits, 2);
+});
+
+test('真站样本：emoji 拆字（处🐕男）+ 显示名黑话（处男免费）→ 两条都隐藏，默认不动作', async () => {
+  const { pipeline, actions } = harness({ answers: scriptedAnswers({ bait: 0.7, full: answersFor({ adult: 0.74, cat: 'adult_solicitation', conf: 0.25 }) }) });
+  const first = await pipeline.decide({
+    id: 'e1',
+    handle: 'czex7Jacquline',
+    displayName: '不药而愈丶❤️处男免费❤️',
+    text: '祝你有美好的一天🟧处🐕男🚹恭喜 发财',
+    media: [],
+    context: 'reply',
+  });
+  assert.equal(first.source, 'jev', '预筛命中（emoji 拆字仍被去符号后匹配到）→ 直接走四问，不再依赖预检');
+  assert.equal(first.prefilter.score >= 2, true, `本地特征分 ${first.prefilter.score}`);
+  assert.equal(first.band, 'hide', 'adult 0.74 ≥ hideNoul 0.65 但类别置信度只有 0.25 → 只隐藏');
+  assert.equal(first.accountAction.kind, 'none');
+  assert.equal(actions.length, 0);
+
+  const second = await pipeline.decide({
+    id: 'e2',
+    handle: 'KhadijahLo9err',
+    displayName: 'ヾ、 秂鴇銘❤️处男免费❤️',
+    text: '祝你有美好的一天🐊处🔪男恭喜 发财',
+    media: [],
+    context: 'reply',
+  });
+  assert.equal(second.farm.hit, true, '归一化后正文完全相同 → 农场命中');
+  assert.equal(second.band, 'hide');
+  assert.equal(second.accountAction.kind, 'none', '农场不账号动作（I1）');
 });
 
 test('文案农场 + 「隐藏档也静音」→ 农场账号被静音（仅用户显式打开时）', async () => {
