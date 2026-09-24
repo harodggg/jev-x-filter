@@ -3,9 +3,9 @@
 三层验证，全部可复现（Chrome 153.0.8010.50 / Node 26.9.0 / macOS）：
 
 ```bash
-npm run check     # 21 项静态自检（37 个 JS 文件语法检查）
-npm test          # 319 个单测（314 通过 + 5 todo）
-npm run verify    # 真实 Chrome 端到端：144 项断言
+npm run check     # 21 项静态自检（41 个 JS 文件语法检查）
+npm test          # 319 个单测
+npm run verify    # 真实 Chrome 端到端：154 项断言
 npm run package   # 打包 dist/jev-x-filter-0.4.7.zip
 npm run all       # 顺序执行以上三步
 
