@@ -12,7 +12,7 @@
 
   const S = globalThis.JevXSelectors;
   const X = globalThis.JevXExtract;
-  const VERSION = '0.4.1';
+  const VERSION = '0.4.2';
 
   const state = {
     settings: null,
@@ -251,16 +251,24 @@
     bar.setAttribute('role', 'note');
 
     const label = resolveDuplicateLabel(beta);
-    const sameText = label ? `与 @${label} 的内容相同` : `与 @${String(beta?.duplicateOf ?? '?')} 的内容相同`;
+    // 低信息量附和（情绪 / 认同 / 确认）走同一套 β 折叠条，但文案要说清「同类附和」而不是「内容相同」。
+    const isAgreement = beta?.kind === 'agreement';
+    const sameText = isAgreement
+      ? label
+        ? `与 @${label} 的同类附和（情绪/认同/确认）`
+        : '与上一条同类附和（情绪/认同/确认）'
+      : label
+        ? `与 @${label} 的内容相同`
+        : `与 @${String(beta?.duplicateOf ?? '?')} 的内容相同`;
     const groupSize = Number(beta?.groupSize);
     const others = Number.isFinite(groupSize) ? Math.max(0, groupSize - 1) : 0;
-    const baseText = `${sameText} · 还有 ${others} 条相似内容`;
+    const baseText = isAgreement ? `${sameText} · 还有 ${others} 条同类回复` : `${sameText} · 还有 ${others} 条相似内容`;
 
     const text = document.createElement('span');
     text.className = 'jevx-beta-text';
     text.textContent = baseText;
     const kindLabel =
-      { verbatim: '内容完全相同', paraphrase: '措辞不同、意思相同', same_claim: '表达同一个说法' }[beta?.kind] ?? '相似内容';
+      { verbatim: '内容完全相同', paraphrase: '措辞不同、意思相同', same_claim: '表达同一个说法', agreement: '低信息量附和（情绪/认同/确认）' }[beta?.kind] ?? '相似内容';
     const detail = [kindLabel];
     if (Number.isFinite(Number(beta?.similarity))) detail.push(`相似度 ${(Number(beta.similarity) * 100).toFixed(0)}%`);
     if (beta?.groupKey) detail.push(`分组 ${beta.groupKey}`);
@@ -322,7 +330,7 @@
     article.insertBefore(buildBetaBar(article, tweet, beta), article.firstChild);
     article.dataset.jevxBeta = '1';
     delete article.dataset.jevxBetaExpanded;
-    log('β 折叠', tweet.id, beta.groupKey);
+    log('β 折叠', tweet.id, beta.groupKey, beta.kind);
   }
 
   function buildAlphaBadge(alpha) {

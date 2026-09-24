@@ -58,7 +58,7 @@ test('语义层默认值与冻结接口一致（α/β 只做展示，不影响�
   assert.deepEqual(s.semantics, {
     enabled: true,
     reserveForFiltering: 50,
-    beta: { enabled: true, threshold: 0.7, maxCandidates: 6, windowSize: 60, foldInFeed: true, foldInReplies: true },
+    beta: { enabled: true, threshold: 0.7, maxCandidates: 6, windowSize: 60, foldInFeed: true, foldInReplies: true, foldLowSignal: true },
     alpha: { enabled: true, onlyInReplies: true, threshold: 0.7, minReferences: 3, maxReferences: 12 },
     maxPerMinute: 10,
     maxPerDay: 300,

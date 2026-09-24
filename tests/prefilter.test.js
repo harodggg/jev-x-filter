@@ -234,3 +234,37 @@ test('X 的「可能的垃圾信息」分区也不绕过白名单/自己发的',
   });
   assert.equal(whitelisted.skip, 'whitelisted_handle');
 });
+
+/**
+ * 真站样本（用户截图）：`只入身体😔😊不入生活` / `只入身体🥦🌰不入生活` / `只入身体🦵💪不入生活`
+ * 是同一批农场账号的固定黑话。加规则前本地零信号，单条只能靠预检拿到 junk 0.69 → 只到「待确认」。
+ */
+test('黑话「只入身体…不入生活」是强特征：单条也会走完整判定', () => {
+  for (const text of ['只入身体😔😊不入生活', '只入身体🥦🌰不入生活', '只进入身体，不进入生活']) {
+    const r = preScreen(tweet({ handle: 'eomgduvbxj92qp', displayName: 'eomgdu vxbjw', text }), settings);
+    assert.equal(r.skip, null, text);
+    assert.equal(r.candidate, true, text);
+    assert.ok(r.reasons.includes('zh_body_euphemism'), `${text} → ${r.reasons.join(',')}`);
+    assert.ok(r.score >= 3, `${text} 分数 ${r.score}`);
+  }
+});
+
+test('新闻/讨论语境引用这句黑话时降级成弱特征，不会因为引用就被隐藏', () => {
+  const r = preScreen(
+    tweet({ text: '警方通报：某平台以「只入身体不入生活」等话术招嫖，已查处多个窝点' }),
+    settings,
+  );
+  assert.equal(r.newsContext, true, '新闻语境要被识别');
+  assert.ok(r.reasons.includes('zh_body_euphemism'));
+  assert.equal(r.score, 1, '强规则在新闻语境里降级为 1 分（不是 3 分）');
+  // 仍然会让模型看一眼（和场景 A 的「警方通报…约炮平台」同一条路径）：降级发生在闸门，
+  // 由模型判断这是新闻而不是招嫖，实测该路径下新闻样本一直是 ignore。
+  assert.equal(r.candidate, true);
+});
+
+test('普通文本里的「身体」不会被这条规则误伤', () => {
+  for (const text of ['锻炼身体，保持健康，每天跑步五公里', '入身体检报告拿到了']) {
+    const r = preScreen(tweet({ text }), settings);
+    assert.equal(r.reasons.includes('zh_body_euphemism'), false, text);
+  }
+});

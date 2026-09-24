@@ -36,7 +36,7 @@ import {
 } from './settings.js';
 import { mergeKnown } from './util.js';
 
-export const VERSION = '0.4.1';
+export const VERSION = '0.4.2';
 
 /* ------------------------------- 运行时状态 ------------------------------- */
 
@@ -368,6 +368,7 @@ globalThis.__jevx = {
   },
   pipelineStats: () => pipeline.stats(),
   recentDecisions: () => pipeline.recent(),
+  recentInputs: () => pipeline.recentInputs?.() ?? [],
   auditorList: () => auditor.list(),
   storage: () => ({ settings, blocklist, cumulative }),
   source: AUDIT_SOURCE,

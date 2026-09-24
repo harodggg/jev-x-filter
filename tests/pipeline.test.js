@@ -504,3 +504,56 @@ test('缓存指纹覆盖动作与预检/农场配置：切换「自动静音」�
   assert.equal(second.accountAction.execute, true, '新的动作配置必须生效');
   assert.equal(jev.calls.length, 2, `应重新调用模型，实际 ${jev.calls.length}`);
 });
+
+/**
+ * β 的本地分支：「情绪 / 认同 / 确认」这类低信息量附和，同一线程只留最早一条。
+ * 它和模型版 β 一样**只做展示**：不改变 band、不改变 accountAction（不变量 I1）。
+ */
+const REPLY = (id, handle, text, seq) => ({
+  id,
+  handle,
+  text,
+  media: [],
+  context: 'reply',
+  threadId: '1900000000000000001',
+  seq,
+});
+
+test('低信息量附和：同线程第二条起才折叠，且只折叠同类', async () => {
+  const { pipeline } = harness({ settingsPatch: { semantics: { ...DEFAULT_SETTINGS.semantics, enabled: true, beta: { ...DEFAULT_SETTINGS.semantics.beta, enabled: true } } } });
+  const first = await pipeline.decide(REPLY('a1', 'reply_a', '认同'));
+  const second = await pipeline.decide(REPLY('a2', 'reply_b', '确定'));
+  const third = await pipeline.decide(REPLY('a3', 'reply_c', '确实'));
+  const substantive = await pipeline.decide(REPLY('a4', 'reply_d', '我不同意，公开数据其实是反过来的，去年同类政策让成本涨了三成'));
+
+  assert.equal(first.beta, null, '第一条是代表条，自己不折叠');
+  assert.equal(second.beta, null, '「确定」和「认同」不是同一类 → 不折叠');
+  assert.equal(third.beta?.kind, 'agreement');
+  assert.equal(third.beta?.folded, true, '「确实」与「确定」同类 → 折叠');
+  assert.equal(third.beta?.duplicateOf, 'a2', '指向同类里最早的那条');
+  assert.equal(third.beta?.groupSize, 2);
+  assert.equal(substantive.beta, null, '讲事情的回复绝不折叠');
+
+  // 纯展示：band 与账号动作不受影响
+  for (const d of [first, second, third, substantive]) {
+    assert.equal(d.band, 'ignore');
+    assert.equal(d.accountAction?.kind ?? 'none', 'none', '只跳过判定，不产生任何账号动作');
+  }
+});
+
+test('关掉「折叠情绪/认同/确认类附和」开关后不再折叠', async () => {
+  const beta = { ...DEFAULT_SETTINGS.semantics.beta, enabled: true, foldLowSignal: false };
+  const { pipeline } = harness({ settingsPatch: { semantics: { ...DEFAULT_SETTINGS.semantics, enabled: true, beta } } });
+  await pipeline.decide(REPLY('b1', 'reply_a', '认同'));
+  const second = await pipeline.decide(REPLY('b2', 'reply_b', '同意'));
+  assert.equal(second.beta, null, '开关关掉后不折叠');
+});
+
+test('时间线上的低信息量附和（没有 threadId）不折叠：宁可少折叠', async () => {
+  const { pipeline } = harness({ settingsPatch: { semantics: { ...DEFAULT_SETTINGS.semantics, enabled: true, beta: { ...DEFAULT_SETTINGS.semantics.beta, enabled: true } } } });
+  const timeline = { id: 'c1', handle: 'x', text: '认同', media: [], context: 'timeline', threadId: null };
+  const first = await pipeline.decide(timeline);
+  const second = await pipeline.decide({ ...timeline, id: 'c2', handle: 'y', text: '同意' });
+  assert.equal(first.beta, null);
+  assert.equal(second.beta, null, '时间线不折叠（只按线程归组）');
+});

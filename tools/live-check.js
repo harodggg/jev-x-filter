@@ -357,6 +357,13 @@ const SAMPLES = [
     expect: 'expectHidden',
   },
   {
+    // 同一天的第四条真站截图：账号名是乱码串（`eomgdu vxbjw` / @eomgduvbxj92qp），只有一条黑话。
+    // 加规则前：本地零信号 → 只有廉价预检 0.69 → 只到「待确认」；加规则后：强规则直接送完整五问。
+    name: '真站·乱码账号名 + 单条黑话',
+    tweet: { id: 'r4', handle: 'eomgduvbxj92qp', displayName: 'eomgdu vxbjw', text: '只入身体😔😊不入生活', context: 'reply', threadId: '1900000000000000011' },
+    expect: 'expectHidden',
+  },
+  {
     name: '真站·同城无偿约 + 同句变体',
     tweet: { id: 'r3', handle: 'jessica31kz6', displayName: '傲旋🌸同城无偿约🌸', text: '只入身体🦵💪不入生活', context: 'reply', threadId: '1900000000000000009' },
     expect: 'expectHidden',
@@ -385,7 +392,11 @@ function loadExtraSamples() {
 }
 
 
-const RUN_SAMPLES = [...SAMPLES, ...loadExtraSamples()];
+// JEV_ONLY_EXTRA=1 时只跑 JEV_SAMPLES_FILE 里的样本：用来**隔离**测量单条真站样本，
+// 不让内置样本的农场/窗口影响它（否则「单条」会被前面的同文案样本聚成农场）。
+const ONLY_EXTRA = process.env.JEV_ONLY_EXTRA === '1';
+const RUN_SAMPLES = ONLY_EXTRA ? loadExtraSamples() : [...SAMPLES, ...loadExtraSamples()];
+if (ONLY_EXTRA && RUN_SAMPLES.length === 0) throw new Error('JEV_ONLY_EXTRA=1 需要同时给 JEV_SAMPLES_FILE');
 
 const SOURCE_LABEL = { jev: '四问', triage: '预检', local: '本地', cache: '缓存', disabled: '已关闭' };
 

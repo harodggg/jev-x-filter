@@ -16,6 +16,7 @@
 import { buildJunkProbe, buildRequest, buildState, readAnswers, readJunkAnswer } from './classifier.js';
 import { decide as gateDecide, describeReasons, planAccountAction, BAND } from './gate.js';
 import { createFarmTracker, hasRepeatedLine } from './farm.js';
+import { planLowSignalFold } from './lowSignal.js';
 import { mediaSuspicion } from './media.js';
 import { preScreen } from './prefilter.js';
 import { createRecentWindow, planSemanticCall, readSemanticsAnswers } from './semantics.js';
@@ -137,6 +138,22 @@ export function createPipeline(deps) {
   void ensureRuntimeLoaded();
   /** 最近判定（调试/端到端诊断用；只读，不进审计）。 */
   const recent = [];
+  /** 最近收到的推文输入（排障用：内容脚本到底抽到了什么 context / threadId / 文本）。 */
+  const recentInputs = [];
+  /**
+   * β 的本地分支：情绪 / 认同 / 确认 这类「没有实质内容的附和」同一线程只留最早一条。
+   * 0 次模型调用；纯展示，绝不参与 band / accountAction（不变量 I1）。
+   * 只对回复区生效（按键 threadId 归组），并且尊重用户开关。
+   */
+  function planLocalFold(tweet, observed, settings) {
+    if (!settings.semantics?.enabled) return null;
+    if (settings.semantics?.beta?.enabled === false) return null;
+    if (settings.semantics?.beta?.foldLowSignal === false) return null;
+    if (settings.semantics?.beta?.foldInReplies === false) return null;
+    if (tweet?.context !== 'reply') return null;
+    return planLowSignalFold(observed ?? tweet, semanticRecent.list());
+  }
+
   const farmTracker = createFarmTracker();
   let farmConfigKey = '';
   const inflight = new Map();
@@ -376,6 +393,12 @@ export function createPipeline(deps) {
         source: out.source,
         farm: out.farm ? out.farm.accounts : 0,
         reasons: out.reasons.slice(0, 3),
+        // 诊断用（端到端排障时能直接看到「这条为什么没折叠」）
+        skip: out.skip ?? null,
+        context: tweet?.context ?? null,
+        threadId: tweet?.threadId ?? null,
+        betaKind: out.beta?.kind ?? null,
+        betaFolded: out.beta?.folded === true,
       });
       if (recent.length > 40) recent.splice(0, recent.length - 40);
       stats.bands[out.band] = (stats.bands[out.band] ?? 0) + 1;
@@ -405,12 +428,18 @@ export function createPipeline(deps) {
     if (pre.skip) {
       stats.skips += 1;
       if (observed) observed.band = BAND.ignore;
+      // 「认同 / 确定 / 哈哈哈」这类附和大多只有 2–4 个字，正好会被「过短无媒体」跳过；
+      // 跳过的是**判定**（不隐藏、不动作、不花调用），但展示层的 β 折叠仍然要给 —— 否则
+      // 「同一线程只留一条附和」永远不生效。只对 too_short_no_media 这么做：
+      // 白名单 / 自己发的 / scope 关掉这些显式选择必须连折叠一起尊重。
+      const skipBeta = pre.skip === 'too_short_no_media' ? planLocalFold(tweet, observed, settings) : null;
+      if (skipBeta) stats.semantics.betaFolds += 1;
       return finish({
         band: BAND.ignore,
         reasons: [],
         source: 'local',
         skip: pre.skip,
-        beta: null,
+        beta: skipBeta,
         alpha: null,
         detail: {
           prefilterScore: pre.score,
@@ -583,6 +612,13 @@ export function createPipeline(deps) {
     // α/β 语义层：在过滤判定**完成之后**附加，只做展示载荷，绝不参与 band / 动作（I1）。
     // 窗口读取发生在判定之后，但入窗在 runDecide 最前面（并发下的可见性靠这个）。
     const semantics = await runSemanticsLayer(tweet, settings, observed);
+    // β 的**本地**分支：情绪 / 认同 / 确认 这类「没有实质内容的附和」彼此字符串不同，
+    // 3-gram 相似度与文案农场都抓不到，但它们语义上是同一类东西 —— 同一线程里只留最早的一条。
+    // 0 次模型调用；模型已经给出 β 折叠时以模型为准；α 命中时不折叠（沿用既有优先级）。
+    const lowSignalBeta =
+      !semantics.beta && !semantics.alpha?.hit ? planLocalFold(tweet, observed, settings) : null;
+    // 低信息量附和也是 β 折叠的一种（同一栏「β 折叠数」里计数，不新增统计字段）。
+    if (lowSignalBeta) stats.semantics.betaFolds += 1;
 
     const reasons = [...gated.reasons];
     if (degraded) reasons.push(degraded);
@@ -594,7 +630,7 @@ export function createPipeline(deps) {
       source,
       skip: null,
       // 冻结接口：不适用时为 null；它们只影响展示（折叠 / 标记），不改 band 与 accountAction。
-      beta: semantics.beta,
+      beta: semantics.beta ?? lowSignalBeta,
       alpha: semantics.alpha,
       detail: {
         ...gated.detail,
@@ -664,6 +700,14 @@ export function createPipeline(deps) {
     /** 同一条推文并发只判一次；结果按 id+文案+阈值指纹缓存。 */
     async decide(tweet) {
       await ensureRuntimeLoaded();
+      recentInputs.push({
+        id: tweet?.id ?? null,
+        handle: tweet?.handle ?? null,
+        context: tweet?.context ?? null,
+        threadId: tweet?.threadId ?? null,
+        text: String(tweet?.text ?? '').slice(0, 40),
+      });
+      if (recentInputs.length > 40) recentInputs.splice(0, recentInputs.length - 40);
       const settings = getSettings();
       const key = cacheKey(tweet, settings);
       const nowMs = now();
@@ -693,6 +737,9 @@ export function createPipeline(deps) {
     /** 最近 40 条判定（诊断用）。 */
     recent() {
       return recent.slice();
+    },
+    recentInputs() {
+      return recentInputs.slice();
     },
     /** 运行态快照（持久化/诊断用）。 */
     snapshotRuntime,

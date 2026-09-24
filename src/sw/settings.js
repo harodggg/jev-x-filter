@@ -199,6 +199,8 @@ export const DEFAULT_SETTINGS = {
       windowSize: 60,
       foldInFeed: true,
       foldInReplies: true,
+      /** 情绪 / 认同 / 确认这类「没有实质内容的附和」：同一线程只留最早的一条（本地判定，0 调用）。 */
+      foldLowSignal: true,
     },
     alpha: {
       enabled: true,
@@ -331,6 +333,7 @@ export function normalizeSettings(raw) {
   s.semantics.beta.windowSize = clampInt(s.semantics.beta.windowSize, 0, 500, 60);
   s.semantics.beta.foldInFeed = Boolean(s.semantics.beta.foldInFeed);
   s.semantics.beta.foldInReplies = Boolean(s.semantics.beta.foldInReplies);
+  s.semantics.beta.foldLowSignal = Boolean(s.semantics.beta.foldLowSignal);
   s.semantics.alpha.enabled = Boolean(s.semantics.alpha.enabled);
   s.semantics.alpha.onlyInReplies = Boolean(s.semantics.alpha.onlyInReplies);
   s.semantics.alpha.threshold = clampNumber(s.semantics.alpha.threshold, 0, 1, 0.7);
