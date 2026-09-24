@@ -555,7 +555,7 @@ test('低信息量附和：整条线程只留最早一条代表，不同类别�
   assert.equal(participation.beta?.folded, true);
   assert.equal(participation.beta?.groupSize, 5);
   assert.equal(participation.beta?.merged, '低信息量附和');
-  assert.equal(participation.beta?.classBreakdown, '愤怒 2 · 喜悦 1 · 支持 1 · 参与 1');
+  assert.equal(participation.beta?.classBreakdown, '愤怒 2 · 喜悦 1 · 支持认同 1 · 参与 1');
   assert.equal(participation.beta?.groupKey, anger1.beta?.groupKey, '整条线程共用一个组键');
   assert.equal(argument.beta, null, '讲理由的回复不是低信息量附和');
 

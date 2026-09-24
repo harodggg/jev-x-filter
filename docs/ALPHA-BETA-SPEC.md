@@ -680,3 +680,31 @@ REFERENCES:
 
 验证：`tests/lowSignal.test.js`（12 组）、`tests/pipeline.test.js`（4 组集成）、
 独立对抗审计 `tests/emotion-merge-audit.test.js`、端到端场景 J（8 项断言）与场景 H（15 项断言）。
+
+---
+
+## 附：v0.4.8 全量信息 → 固定 10 类 → 折叠这几类（Lead 追加，2026-09）
+
+用户第二轮反馈（真站抽奖帖 8 条回复都没折）并给定口径：
+**「应该获得全量的信息，然后分类成几类。折叠几类就行了。最多 10 类。」**
+
+**类别固定 10 个**（`EMOTION_CLASSES`，写死）：`anger 愤怒 / joy 喜悦 / greeting 问候祝福 /
+support 支持认同 / oppose 反对 / sadness 悲伤 / praise 赞美 / wish 期待求取 / participation 参与 / emoji 表情`。
+合并口径：原 `confirmation` → 支持认同，原 `blessing` → 问候祝福，原 `social` → 期待求取。
+
+- **AC-10C1（类别上限）**：`Object.keys(EMOTION_CLASSES).length === 10`（硬断言）。
+- **AC-10C2（三级分类）**：① 核心短语 ≤ `LOW_SIGNAL_MAX_CHARS`(12) → ② 整串锚定模板 ≤
+  `TEMPLATE_MAX_CHARS`(20) → ③ **覆盖率判定** ≤ `COVERAGE_MAX_CHARS`(60)：整条归一化文本贪心最长匹配，
+  落在词表里的字符占比 ≥ `COVERAGE_MIN_RATIO`(0.7) 且某类证据 ≥2 字 → 归入该类（多类取证据最多者）。
+- **AC-10C3（真站覆盖）**：两批共 14 条真站样本（v0.4.7 六条 + v0.4.8 八条）全部命中并合并成一条代表。
+- **AC-10C4（否决闸门）**：含数字/链接、命中 `SUBSTANTIVE`（因为/但是/其实/建议/数据/规则/时间/价格/
+  放弃/太少/不划算…）、命中 `ADVICE_VETO`（别/不要/不用/不必/请勿/记得）、覆盖率不足 → 一律 null。
+  硬断言反例 18 条，例如 `这个活动名额太少，我放弃了`、`我没有时间参加这个活动`、`最好别来`、`我参加过一次`。
+- **AC-10C5（词表分层）**：通用词不进类别词表（`最好/最美/快乐` 只走锚定模板），诉求动词进中性词表
+  （`没有/缺/需要/咋搞` 不计类别证据）。
+- **AC-10C6（归组与不变量）**：同线程低信息量附和合并成一条代表；详情页主帖免疫；
+  `band`/`accountAction`/`reasons` 与关闭该层时完全一致（I1）。
+
+验证：`tests/lowSignal.test.js`（17 组）、`tests/pipeline.test.js`（4 组集成）、
+独立对抗审计 `tests/emotion-merge-audit.test.js`（36 用例，含 14 条覆盖率临界误伤护栏与 8 条纯填充反例）、
+端到端**场景 K**（8 项断言，8 条 → 1 条代表 + 7 折叠）。

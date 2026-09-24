@@ -15,14 +15,21 @@ import {
   planEmotionFold,
 } from '../src/sw/lowSignal.js';
 
-test('情绪分类：六类 + 表情，正例逐条命中', () => {
+test('情绪分类：固定 10 类 + 表情，正例逐条命中（v0.4.8 收敛后）', () => {
+  assert.equal(Object.keys(EMOTION_CLASSES).length, 10, '用户口径：最多 10 类');
   const cases = {
     anger: ['生气', '气死我了', '太过分了', '离谱', '无语', '服了', '垃圾', '滚', '妈的', '🤬🤬'],
     joy: ['哈哈', '哈哈哈', '嘿嘿', '笑死', '开心', '太好了', '绝了', '太赞了', '😄😄'],
-    support: ['支持', '同意', '认同', '赞同', '加油', '说得对', '有道理', '我也认同', '+1', '111'],
+    // 原「确认」并入「支持认同」（v0.4.8）
+    support: ['支持', '同意', '认同', '赞同', '加油', '说得对', '有道理', '我也认同', '+1', '111', '确定', '确实', '没错', '没毛病', '对的', '就是这样'],
     oppose: ['反对', '不同意', '不认同', '不行', '拒绝', '呵呵', '算了吧'],
     sadness: ['难过', '泪目', '呜呜', '心碎', '唉'],
-    confirmation: ['确定', '确实', '没错', '没毛病', '对的', '就是这样'],
+    praise: ['美女啊', '太美了', '真好看', '漂亮', '不错', '好帅'],
+    // 原「社交」并入「期待求取」（v0.4.8）
+    wish: ['我也想去', '好想去', '蹲一个', '期待', '想要', '交朋友', '互关', '求关注', '加个好友'],
+    // 原「祝福」并入「问候祝福」（v0.4.8）
+    greeting: ['Gm', 'gm', '早上好', '晚安', '你好', 'hi', '中秋快乐', '新年快乐'],
+    participation: ['三连', '已三连', '都来参加', '报名', '打卡', '参与啦'],
   };
   for (const [cls, texts] of Object.entries(cases)) {
     for (const text of texts) {
@@ -36,9 +43,10 @@ test('情绪分类：六类 + 表情，正例逐条命中', () => {
   assert.equal(classifyEmotion('😂😂'), 'emoji');
 });
 
-test('兼容旧名 classifyLowSignal：支持→agreement、确认→confirmation、其余→emotion', () => {
+test('兼容旧名 classifyLowSignal：支持/确认→agreement、其余→emotion', () => {
   assert.equal(classifyLowSignal('认同'), 'agreement');
-  assert.equal(classifyLowSignal('确定'), 'confirmation');
+  // v0.4.8 起「确认」并入「支持认同」，旧名只输出 agreement / emotion 两种
+  assert.equal(classifyLowSignal('确定'), 'agreement');
   assert.equal(classifyLowSignal('哈哈哈'), 'emotion');
   assert.equal(classifyLowSignal('生气'), 'emotion');
   assert.equal(classifyLowSignal('我不同意，公开数据其实是反过来的'), null);
@@ -91,7 +99,7 @@ test('fold 模式：整条线程的低信息量附和只留最早一条当代表
   // v0.4.7：`支持` 与 `愤怒` **不再各算一条代表** —— 整条线程合并成一条（用户：「折叠合并成同一条」）。
   const support = planEmotionFold({ id: 'a3', handle: 'r3', text: '支持', threadId: 'T1', seq: 3, context: 'reply' }, recent, { mode: 'fold' });
   assert.equal(support.emotion, 'support', '本条自己的类别仍然保留');
-  assert.equal(support.emotionLabel, '支持');
+  assert.equal(support.emotionLabel, '支持认同');
   assert.equal(support.representative, false, '不同类别也合并到同一条代表上');
   assert.equal(support.folded, true);
   assert.equal(support.duplicateOf, 'a1');
@@ -134,12 +142,12 @@ test('不折叠的边界：不同线程 / 没有 threadId / 不是情绪', () =>
 });
 
 
-test('情绪分类：赞美 / 期待 / 问候 / 社交（用户截图里的那批短句）', () => {
+test('情绪分类：10 类里的短句一族（赞美 / 期待求取 / 问候祝福 / 参与）', () => {
   const cases = {
     praise: ['美女啊', '太美了', '真好看', '漂亮', '不错', '好帅'],
-    wish: ['我也想去', '好想去', '蹲一个', '期待', '想要'],
-    greeting: ['Gm', 'gm', '早上好', '晚安', '你好', 'hi'],
-    social: ['交朋友', '互关', '求关注', '加个好友'],
+    wish: ['我也想去', '好想去', '蹲一个', '期待', '想要', '交朋友', '互关', '求关注', '加个好友'],
+    greeting: ['Gm', 'gm', '早上好', '晚安', '你好', 'hi', '中秋快乐'],
+    participation: ['三连', '参加', '报名', '打卡', '已三连'],
   };
   for (const [cls, texts] of Object.entries(cases)) {
     for (const text of texts) assert.equal(classifyEmotion(text), cls, text);
@@ -202,7 +210,7 @@ test('v0.4.7：用户截图的 6 条（赞美/参与/期待）全部命中并合
   const last = plans[5];
   assert.equal(last.groupSize, 6);
   assert.deepEqual(last.classes, { praise: 2, wish: 1, participation: 3 });
-  assert.equal(last.classBreakdown, '参与 3 · 赞美 2 · 期待 1');
+  assert.equal(last.classBreakdown, '参与 3 · 赞美 2 · 期待求取 1');
   assert.equal(last.merged, '低信息量附和');
   assert.equal(last.emotion, 'participation', '本条自己的类别仍然保留');
   assert.equal(last.duplicateOf, 's1');
@@ -234,4 +242,75 @@ test('v0.4.7：模板的误伤护栏（实质词前缀 / 最高级误用 / 反�
     '什么时候可以来一份活动规则说明',
   ];
   for (const text of mustNotFold) assert.equal(classifyEmotion(text), null, text);
+});
+
+/**
+ * v0.4.8 —— 用户口径：「应该获得全量的信息，然后分类成几类。折叠几类就行了。最多 10 类。」
+ * 于是：类别收敛到 10 类；分类不再只认「整串等于某个专属句式」，而是
+ * ① 核心短语（≤12 字）→ ② 整串锚定模板（≤20 字）→ ③ **全量文本覆盖率判定**（≤60 字：
+ * 落在词表里的字符 ≥70%，且某类证据 ≥2 字，且无实质词/数字/链接/劝告否定句）。
+ */
+test('v0.4.8：真站第二批 8 条（没有专属模板的整句）全部被归类', () => {
+  const screenshot = [
+    ['哇塞，参与啦，佳佳姐', 'participation'],
+    ['报告，我想参加，可是没有周边🥺', 'wish'],
+    ['中秋快乐梦想成真', 'greeting'],
+    ['佳佳姐真的需要一份周边参加活动', 'wish'],
+    ['我是真没有周边，咋搞', 'wish'],
+    ['中秋快乐，非常喜欢今年okx的周边，太爱了！', 'greeting'],
+    ['首先得有周边', 'wish'],
+    ['Okx的活动太高级了，周边也很漂亮', 'praise'],
+  ];
+  for (const [text, cls] of screenshot) {
+    assert.equal(classifyEmotion(text), cls, `${text} → ${classifyEmotion(text)}（期望 ${cls}）`);
+  }
+  // 同线程 8 条 → 仍然只留 1 条代表（用户上一轮的「合并成同一条」没有被破坏）
+  const replies = screenshot.map(([text], i) => ({
+    id: `n${i + 1}`, handle: `h${i + 1}`, text, threadId: 'T8', seq: i + 1, ts: i + 1, context: 'reply',
+  }));
+  const plans = replies.map((target, i) => planEmotionFold(target, replies.slice(0, i), { mode: 'fold' }));
+  assert.equal(plans.filter((p) => p?.folded === false).length, 1);
+  assert.equal(plans[7].groupSize, 8);
+  assert.equal(new Set(plans.map((p) => p.groupKey)).size, 1);
+  assert.match(plans[7].classBreakdown, /问候祝福/);
+  assert.match(plans[7].classBreakdown, /期待求取/);
+});
+
+test('v0.4.8：覆盖率判定能泛化（同一句话里混合多类词，取证据最多的一类）', () => {
+  const cases = [
+    ['我也想参加这个活动', ['participation', 'wish']],
+    ['已经报名了，坐等开奖', ['participation', 'wish']],
+    ['大家中秋快乐，祝梦想成真', ['greeting']],
+    ['中秋快乐呀大家', ['greeting']],
+    ['周边真的很好看', ['praise']],
+    ['互关一下交个朋友', ['wish']],
+    ['我也来支持一下，太棒了', ['support', 'praise']],
+  ];
+  for (const [text, allowed] of cases) {
+    assert.ok(allowed.includes(classifyEmotion(text)), `${text} → ${classifyEmotion(text)}（期望 ${allowed.join('/')}）`);
+  }
+});
+
+test('v0.4.8：覆盖率判定的否决（实质词 / 劝告否定 / 问句 / 事务句一律不折叠）', () => {
+  const mustNotFold = [
+    '这个活动名额太少，我放弃了',
+    '我没有时间参加这个活动',
+    '周边产品的定价策略',
+    '参加活动的注意事项',
+    '中秋月饼的销量数据',
+    '活动规则在哪里看',
+    '资格认证流程',
+    '福利院的孩子需要帮助',
+    '最好别来',
+    '别忘报名',
+    '我参加过一次',
+    '报名截止了吗',
+    '今天天气最好',
+    '这个方案最好',
+    '好人最好骗',
+    '最美不过夕阳红',
+    '活动几点开始',
+    '这个活动名额太多，不划算',
+  ];
+  for (const text of mustNotFold) assert.equal(classifyEmotion(text), null, `${text} → ${classifyEmotion(text)}`);
 });

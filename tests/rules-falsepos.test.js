@@ -160,7 +160,10 @@ test('情绪正例：各自的类别都要命中（交叉检查分类器是否�
     ['不行', 'oppose'],
     ['算了吧', 'oppose'],
     ['难过', 'sadness'],
-    ['确实', 'confirmation'],
+    // v0.4.8：confirmation 并入 support（用户要求「最多 10 类」）
+    ['确实', 'support'],
+    ['确定', 'support'],
+    ['确认', 'support'],
     ['😂😂', 'emoji'],
     ['😀', 'emoji'],
     ['哈哈哈哈', 'joy'],
@@ -185,20 +188,26 @@ test('情绪反例：讲理由/带论据的回复一律不是情绪（折叠的�
   }
 });
 
-test('情绪反例：疑问句 / 带数字 / 带链接 / 超长文本', () => {
+test('情绪反例：疑问句 / 带数字 / 带链接 / 讲事情的长文本', () => {
   for (const text of ['这是什么意思？', '为什么这么说？', '支持 2024 年的方案', '支持 https://x.com/abc', '不行 3 个点了']) {
     assert.equal(classifyEmotion(text), null, text);
   }
-  const long = '支持'.repeat(20);
-  assert.equal(classifyEmotion(long), null, '超长文本不折叠');
+  // v0.4.8 三层长度：核心 ≤12 / 模板 ≤20 / **覆盖率 ≤60**。
+  // 所以「纯附和的长句」在 60 字内仍会命中（覆盖率 ≥0.7），但「讲事情的长句」必须 null。
+  assert.equal(classifyEmotion('已经报名了坐等开奖'), 'participation', '13 字纯附和走覆盖率应命中');
+  assert.equal(classifyEmotion('支持'.repeat(20)), 'support', '40 字纯附和（≤60、覆盖率足够）应命中');
+  assert.equal(classifyEmotion('支持'.repeat(31)), null, '超过 60 字不再走覆盖率');
+  assert.equal(classifyEmotion('很好的活动我非常喜欢这个周边真的很棒棒棒棒棒棒棒棒棒棒'), null, '长句覆盖率不足 → null');
 });
 
-test('情绪边界：长度正好 12 归一化字符算情绪，13 个不算', () => {
+test('情绪边界：v0.4.8 三层长度（核心≤12 / 模板≤20 / 覆盖率≤60，覆盖率需 ≥0.7）', () => {
   const twelve = '支持支持支持支持支持支持';
-  const thirteen = `${twelve}支`;
   assert.equal([...twelve].length, LOW_SIGNAL_MAX_CHARS);
-  assert.equal(classifyEmotion(twelve), 'support');
-  assert.equal(classifyEmotion(thirteen), null);
+  assert.equal(classifyEmotion(twelve), 'support', '12 字核心路径');
+  // 13 字不再一刀切：纯附和（覆盖率足够）命中，带实质词/否决词的 null
+  assert.equal(classifyEmotion(`${twelve}支`), 'support', '13 字纯附和走覆盖率');
+  assert.equal(classifyEmotion('已经报名了但没有时间'), null, '实质词 时间 → null');
+  assert.equal(classifyEmotion('已经报名了别催了'), null, '否决词 别 → null');
 });
 
 test('情绪边界：空串 / 标点 / 箭头 / 拉丁字母不是情绪，纯 emoji 是 emoji', () => {
@@ -232,10 +241,12 @@ test('情绪反例：含核心短语子串的正常词/句不会被误伤', () =
   assert.equal(classifyEmotion('好吧'), 'support');
 });
 
-test('旧名兼容：classifyLowSignal 的映射不变', () => {
+test('旧名兼容：classifyLowSignal 只保留 agreement / emotion 两种输出', () => {
   assert.equal(classifyLowSignal('支持'), 'agreement');
   assert.equal(classifyLowSignal('认同'), 'agreement');
-  assert.equal(classifyLowSignal('确实'), 'confirmation');
+  // v0.4.8：confirmation 并入 support，旧名映射到 agreement（不再有 confirmation 输出）
+  assert.equal(classifyLowSignal('确实'), 'agreement');
+  assert.equal(classifyLowSignal('确定'), 'agreement');
   assert.equal(classifyLowSignal('哈哈'), 'emotion');
   assert.equal(classifyLowSignal('生气'), 'emotion');
   assert.equal(classifyLowSignal('我不同意，因为成本太高'), null);

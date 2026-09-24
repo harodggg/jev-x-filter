@@ -1,29 +1,32 @@
 /**
- * v0.4.7「低信息量附和合并成一条」的**独立对抗审计**（task-9）。
+ * v0.4.7 / v0.4.8「低信息量附和合并成一条」的**独立对抗审计**（task-9 / task-12）。
  *
- * 只读 src/，只新建本文件。审计对象：
- *   · `classifyEmotion()` 新增的 participation / praise / wish 整串锚定模板；
- *   · `planEmotionFold()` 的线程级单组（`groupKey = em:<threadId>:low`、只留最早一条代表、`classes` 明细）；
- *   · feed 退化、详情页主帖排除、以及不变量 I1（band / accountAction 不受折叠影响）。
+ * 只读 src/，只新增本文件。审计对象：
+ *   · v0.4.7：participation / praise / wish 整串锚定模板 + `planEmotionFold()` 线程级单组
+ *     （`groupKey = em:<threadId>:low`、只留最早一条代表、`classes`/`classBreakdown` 明细）；
+ *   · v0.4.8：类别收敛到 10 个，分类改为「高精度锚定 + **全量文本覆盖率**（覆盖字符数/全文 ≥ 0.6
+ *     且某类证据 ≥2 字）」，风险集中在**讲事情的句子被覆盖率误判**；
+ *   · feed 退化、详情页主帖免疫、以及不变量 I1（band / accountAction / reasons 不受折叠影响）。
  *
  * 重点是**误伤**：正常评论（带理由 / 疑问 / 数字 / 链接 / 学术新闻 / 长文本 / 最高级误用）绝不能被折叠。
  *
  * ── 关于「现在跑会不会红」────────────────────────────────────────────────
- * Lead 正在并行改 `src/sw/lowSignal.js`（本文件写就时它还只落地了一部分）。为了让
- * `node --test tests/` 在落地前也是 0 fail、落地后自动变成硬断言，这里用一个**规格探测**：
+ * Lead 并行落地 v0.4.8。为了让 `node --test tests/` 在落地前也 0 fail、落地后自动变硬断言，
+ * 这里用两个**规格探测**：
  *
- *   V047 = 6 条截图样本都能分类 且 planEmotionFold 已返回 `em:<threadId>:low` 单组。
+ *   V047 = 6 条截图样本都能分类 且 planEmotionFold 已返回 `em:<threadId>:low` 单组；
+ *   V048 = EMOTION_CLASSES 恰好是 10 类，且带 `words`（覆盖率词表）字段。
  *
- * 探测为假时，v0.4.7 规格用例带 `{ todo: true }`（失败只进 todo 计数，不弄红套件）；
- * 探测为真时它们自动变成普通硬断言。**误伤反例（预期 null）始终是硬断言** ——
- * 它们是审计护栏，落地后一旦命中就是真缺陷。
- * 发现真实缺陷不改 src：把对应用例改成 `{ todo: true }` 并写清「期望/实际/最小复现/建议口径」。
+ * 探测为假时对应用例带 `{ todo: true }`（失败只进 todo 计数，不弄红套件）；探测为真时自动变硬断言。
+ * **误伤反例（预期 null）始终是硬断言** —— 它们是审计护栏，落地后一旦命中就是真缺陷。
+ * 发现真实缺陷不改 src：优先直接回报 Lead，必要时把用例改成 `{ todo: true }` 并写清
+ * 「期望/实际/最小复现/建议口径」。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPipeline } from '../src/sw/pipeline.js';
 import { DEFAULT_SETTINGS, normalizeSettings } from '../src/sw/settings.js';
-import { classifyEmotion, planEmotionFold } from '../src/sw/lowSignal.js';
+import { EMOTION_CLASSES, classifyEmotion, planEmotionFold } from '../src/sw/lowSignal.js';
 
 /* ------------------------------- 规格探测 ------------------------------- */
 
@@ -47,8 +50,21 @@ const V047 = (() => {
   }
 })();
 
+/** v0.4.8 结构探测：类别收敛到 10 个 + 覆盖率词表 `words` 出现。 */
+const V048 = (() => {
+  try {
+    const want = ['anger', 'emoji', 'greeting', 'joy', 'oppose', 'participation', 'praise', 'sadness', 'support', 'wish'];
+    const keys = Object.keys(EMOTION_CLASSES ?? {}).sort();
+    if (JSON.stringify(keys) !== JSON.stringify(want)) return false;
+    return Object.values(EMOTION_CLASSES).some((spec) => Array.isArray(spec?.words) && spec.words.length > 0);
+  } catch {
+    return false;
+  }
+})();
+
 /** 规格未落地时把这些用例降级成 todo（不弄红套件）；落地后自动变硬断言。 */
 const SPEC = V047 ? {} : { todo: true };
+const SPEC48 = V048 ? {} : { todo: true };
 
 /** 截图里的 6 条回复（用户要求「合并成同一条」）。 */
 const SCREENSHOT = [
@@ -145,9 +161,24 @@ test('误伤：整串模板不得吃掉「最高级 + 否定/劝告」的短句'
   assert.equal(classifyEmotion('最好小心点'), null);
 });
 
-test('误伤：feed（时间线）里的正常短句也不会被当成附和', () => {
-  for (const text of ['已读', '转发一下', '规则写得很清楚', '大家注意安全']) {
+test('误伤：feed（时间线）里的正常短句也不会被当成附和（纯号召句按新口径另测）', () => {
+  for (const text of ['已读', '规则写得很清楚', '大家注意安全']) {
     assert.equal(classifyEmotion(text), null, `低信息量≠可折叠：${text}`);
+  }
+});
+
+test('v0.4.8 口径：转发/扩散类号召句算参与；带信息的转发行仍 null', () => {
+  // 口径：转发/三连/报名这类号召没有观点也没有事实，属于参与类，应当折叠。
+  for (const text of ['转发一下', '求转发', '求扩散', '帮忙转发', '转发扩散']) {
+    assert.equal(classifyEmotion(text), 'participation', `号召句应判参与：${text}`);
+  }
+  // 对照 1：带信息量的问句/陈述仍必须 null
+  for (const text of ['报名截止了吗', '参加活动的注意事项', '我参加过一次']) {
+    assert.equal(classifyEmotion(text), null, `有信息的句子不该被折叠：${text}`);
+  }
+  // 对照 2：同样是「转发」开头，但句子在讲事情/规则 → null
+  for (const text of ['转发规则在哪里看', '转发抽奖规则是什么', '转发给需要的人', '我转发给了三个朋友']) {
+    assert.equal(classifyEmotion(text), null, `带信息的转发行不该折叠：${text}`);
   }
 });
 
@@ -425,4 +456,110 @@ test('v0.4.7：pipeline 里第二条同线程附和被本地合并（kind=emotio
   assert.equal(second.beta?.duplicateOf, 'e1');
   assert.equal(second.beta?.groupKey, 'em:th1:low');
   assert.equal(second.beta?.groupSize, 2);
+});
+
+/* ============ 七、v0.4.8：全量文本覆盖率判定（10 类收敛）的对抗审计 ============
+ * 用户诉求从「给截图句式补模板」升级为「全量信息 → 收敛成 ≤10 类」。
+ * 覆盖率判定的核心风险是**把讲事情的句子判成低信息量**：
+ *   · 覆盖字符数/全文 ≥ 0.6 的临界句（含类别词但语义是提问/陈述）；
+ *   · 中性填充词 + 单个类别词；
+ *   · 纯填充句（没有类别证据）。
+ * 下面的「误伤护栏」是硬断言（在 v0.4.7 与 v0.4.8 下都必须 null）；
+ * 类别收敛 / 新样本命中 / 抢词口径用 SPEC48 门控（v0.4.8 落地后自动变硬断言）。
+ */
+
+test('v0.4.8：类别收敛到 10 个（confirmation→support、social→wish、blessing→greeting）', SPEC48, () => {
+  const keys = Object.keys(EMOTION_CLASSES).sort();
+  assert.deepEqual(keys, ['anger', 'emoji', 'greeting', 'joy', 'oppose', 'participation', 'praise', 'sadness', 'support', 'wish']);
+  assert.equal(EMOTION_CLASSES.confirmation, undefined, 'confirmation 合并进 support');
+  assert.equal(EMOTION_CLASSES.social, undefined, 'social 合并进 wish');
+  assert.equal(EMOTION_CLASSES.blessing, undefined, 'blessing 合并进 greeting');
+  for (const key of keys) {
+    assert.ok(Array.isArray(EMOTION_CLASSES[key].words), `${key} 应带覆盖率词表 words`);
+    assert.equal(typeof EMOTION_CLASSES[key].label, 'string', `${key} 应有中文标签`);
+  }
+});
+
+test('v0.4.8：8 条新样本（没有专属模板的整句）必须被归类', SPEC48, () => {
+  // 前 3 条来自 Lead 的设计说明，后 5 条是我另造的；类别给一个可接受集合，口径见回报。
+  const samples = [
+    ['哇塞，参与啦，佳佳姐', ['participation', 'praise', 'greeting']],
+    ['中秋快乐，非常喜欢今年okx的周边，太爱了！', ['greeting', 'joy', 'praise']],
+    ['okx的活动太高级了周边也很漂亮', ['praise', 'joy']],
+    ['这个活动看着不错，我也来参加一个', ['participation', 'support', 'praise']],
+    ['佳佳姐的周边真的太好看了', ['praise', 'joy']],
+    ['已经报名了，坐等开奖', ['participation', 'wish']],
+    ['大家都来支持一下这个活动', ['support', 'participation']],
+    ['祝大家中秋快乐，活动顺利', ['greeting', 'wish']],
+  ];
+  for (const [text, allowed] of samples) {
+    const cls = classifyEmotion(text);
+    assert.notEqual(cls, null, `覆盖率判定应能归类：${text}`);
+    assert.ok(allowed.includes(cls), `${text} 归到意外类别：${cls}（可接受 ${allowed.join('/')}）`);
+  }
+});
+
+test('v0.4.8：10 类抢词口径（我认同的部分用硬断言，存疑的给可接受集合）', SPEC48, () => {
+  // 认同：`支持` 是 support 的最强证据
+  assert.equal(classifyEmotion('支持活动'), 'support');
+  // 认同：`漂亮` 归赞美（不是 joy 的泛化情绪）
+  assert.equal(classifyEmotion('周边很漂亮'), 'praise');
+  // 存疑：`中秋快乐太爱了` —— 我倾向 greeting（中秋快乐 4 字证据 > 太爱了 3 字）
+  assert.ok(['greeting', 'joy'].includes(classifyEmotion('中秋快乐太爱了')), '中秋快乐太爱了');
+  // 存疑：`活动太高级了` —— 我倾向 praise（“高级”是评价），也可以是 joy/support
+  assert.ok(['praise', 'joy', 'support'].includes(classifyEmotion('活动太高级了')), '活动太高级了');
+});
+
+test('误伤护栏（覆盖率临界）：含类别词但语义是提问/陈述/事务的句子必须 null', () => {
+  const corpus = [
+    '我没有时间参加这个活动',
+    '活动在哪里报名',
+    '周边的质量不错但有瑕疵',
+    '中秋节我要加班',
+    '活动几点开始',
+    '这个活动规则是什么',
+    '我报名了三次都没中',
+    '谁参加谁知道，去年组织得很差',
+    '活动规则写清楚了吗',
+    '周边在哪买，多少钱',
+    '我参加过一次，体验一般',
+    '支持归支持，执行还是要看细节',
+    '这个活动名额太少，我放弃了',
+    '参加完活动记得把垃圾带走',
+  ];
+  for (const text of corpus) {
+    assert.equal(classifyEmotion(text), null, `讲事情的句子不该被覆盖率吃掉：${text}`);
+  }
+});
+
+test('误伤护栏（纯填充）：没有类别证据的句子不得归类', () => {
+  for (const text of ['我也是', '真的吗', '我我我', '都是', '还是吧', '啊这', '也就那样', '还行吧']) {
+    assert.equal(classifyEmotion(text), null, `纯填充没有类别证据：${text}`);
+  }
+});
+
+test('中性填充 + 一个类别词：仍然要命中（覆盖率判定的正向价值）', () => {
+  const positive = [
+    ['我支持', ['support']],
+    ['我也来参加', ['participation']],
+    ['好', ['support', 'praise', 'joy']],
+    ['顶', ['support', 'praise']],
+    ['真的不错', ['praise', 'support', 'joy']],
+    ['太爱了', ['joy', 'praise']],
+  ];
+  for (const [text, allowed] of positive) {
+    const cls = classifyEmotion(text);
+    assert.notEqual(cls, null, `中性填充 + 类别词应命中：${text}`);
+    assert.ok(allowed.includes(cls), `${text} 归到意外类别：${cls}`);
+  }
+});
+
+test('v0.4.8：归组/主帖/不变量不回退（同线程单组 + 主帖免疫 + I1）', SPEC48, async () => {
+  const replies = SCREENSHOT.map((text, i) => reply(`m${i + 1}`, text, i + 1));
+  const last = planEmotionFold(replies[5], replies.slice(0, 5), { mode: 'fold' });
+  assert.equal(last.groupKey, 'em:th9:low');
+  assert.equal(last.groupSize, 6);
+  assert.equal(last.folded, true);
+  assert.equal(last.merged, '低信息量附和');
+  assert.deepEqual(last.classes && Object.values(last.classes).reduce((s, n) => s + n, 0), 6);
 });

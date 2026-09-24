@@ -360,6 +360,35 @@ function lowInfoMergeHtml() {
 </body></html>`;
 }
 
+
+/**
+ * 场景 K 夹具（v0.4.8）：真站截图第二批 —— 抽奖帖下面 8 条回复
+ * （参与变体 / 中秋祝福 / 缺周边诉求 / 活动赞美），用户说「参与也是类似的，中秋祝福也是类似的」。
+ * 类别已收敛到 10 类，分类走「全量文本覆盖率判定」，不再依赖每条专属句式。
+ */
+function lowInfoCoverageHtml() {
+  const ROOT_ID = '1912000000000000020';
+  return `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>低信息量覆盖率夹具</title>
+<style>body{font:14px/1.5 sans-serif;margin:0}article{display:block;padding:12px;border-bottom:1px solid #ddd}</style>
+</head><body>
+<div data-testid="primaryColumn">
+  <!-- 主帖（id === URL status id）：永不折叠 -->
+  ${article(ROOT_ID, 'host', '中秋活动：关注 + 三连，抽 3 位送周边', { displayName: '主办方' })}
+  ${article('1601', 'p1', '哇塞，参与啦，佳佳姐', { replyTo: 'host', displayName: '黑眼圈' })}
+  ${article('1602', 'p2', '报告，我想参加，可是没有周边🥺', { replyTo: 'host', displayName: 'Davis招财' })}
+  ${article('1603', 'p3', '中秋快乐梦想成真', { replyTo: 'host', displayName: '江户川' })}
+  ${article('1604', 'p4', '佳佳姐真的需要一份周边参加活动', { replyTo: 'host', displayName: 'Venz' })}
+  ${article('1605', 'p5', '我是真没有周边，咋搞', { replyTo: 'host', displayName: 'Enzo' })}
+  ${article('1606', 'p6', '中秋快乐，非常喜欢今年okx的周边，太爱了！', { replyTo: 'host', displayName: '玉帝' })}
+  ${article('1607', 'p7', '首先得有周边', { replyTo: 'host', displayName: 'cry' })}
+  ${article('1608', 'p8', 'Okx的活动太高级了，周边也很漂亮', { replyTo: 'host', displayName: 'NotFunnyGuy' })}
+  <!-- 讲事情的回复：绝不被折叠 -->
+  ${article('1609', 'p9', '我不同意，公开数据其实是反过来的，去年同类活动让品牌成本涨了三成', { replyTo: 'host', displayName: '反对者' })}
+</div>
+</body></html>`;
+}
+
 /* ============================== mock 服务 ============================== *//* ============================== mock 服务 ============================== */
 
 function answersFor(state) {
@@ -528,6 +557,7 @@ function startMockServer() {
     // 否则会被当成场景 E 的线程夹具（踩过一次：H 的断言全红，其实是夹具路由错了）。
     if (/scenario=h/.test(req.url)) res.end(lowSignalThreadHtml());
     else if (/scenario=j/.test(req.url)) res.end(lowInfoMergeHtml());
+    else if (/scenario=k/.test(req.url)) res.end(lowInfoCoverageHtml());
     else if (/scenario=i/.test(req.url)) res.end(emotionFeedHtml());
     else if (/scenario=f/.test(req.url)) res.end(menuTrapHtml());
     else if (/scenario=g/.test(req.url)) res.end(spamSectionHtml());
@@ -1340,9 +1370,9 @@ async function main() {
     check('合并：1302~1306 五条全部折叠，只留 1301 一条代表', ['1302', '1303', '1304', '1305', '1306'].every((id) => h[id]?.beta === '1'), JSON.stringify(['1302', '1303', '1304', '1305', '1306'].map((id) => `${id}:${h[id]?.beta ?? '-'}`)));
     check('愤怒：第二条折叠，条文写明「情绪 · 愤怒」', h['1302']?.beta === '1' && /情绪 · 愤怒/.test(h['1302']?.text ?? ''), (h['1302']?.text ?? '').slice(0, 160));
     // 合并条上的条数是**判定当时**的累计值（每条推文各自渲染），所以拿最后判定的 1306 断言满员时的文案。
-    check('最后一条的条文写明「低信息量附和 6 条」+ 类别人数（愤怒 2 · 喜悦 2 · 支持 1 · 反对 1）', /低信息量附和 6 条/.test(h['1306']?.text ?? '') && /愤怒 2/.test(h['1306']?.text ?? '') && /喜悦 2/.test(h['1306']?.text ?? '') && /支持 1/.test(h['1306']?.text ?? '') && /反对 1/.test(h['1306']?.text ?? '') && /还有 5 条/.test(h['1306']?.text ?? ''), (h['1306']?.text ?? '').slice(0, 200));
+    check('最后一条的条文写明「低信息量附和 6 条」+ 类别人数（愤怒 2 · 喜悦 2 · 支持认同 1 · 反对 1）', /低信息量附和 6 条/.test(h['1306']?.text ?? '') && /愤怒 2/.test(h['1306']?.text ?? '') && /喜悦 2/.test(h['1306']?.text ?? '') && /支持认同 1/.test(h['1306']?.text ?? '') && /反对 1/.test(h['1306']?.text ?? '') && /还有 5 条/.test(h['1306']?.text ?? ''), (h['1306']?.text ?? '').slice(0, 200));
     check('喜悦：合并后仍标出本条类别「情绪 · 喜悦」', h['1304']?.beta === '1' && /情绪 · 喜悦/.test(h['1304']?.text ?? ''), (h['1304']?.text ?? '').slice(0, 160));
-    check('支持：条文里标出「情绪 · 支持」（v0.4.7 起并入同一条合并组）', h['1305']?.beta === '1' && /情绪 · 支持/.test(h['1305']?.text ?? ''), (h['1305']?.text ?? '').slice(0, 160));
+    check('支持：条文里标出「情绪 · 支持认同」（v0.4.7 起并入同一条合并组）', h['1305']?.beta === '1' && /情绪 · 支持认同/.test(h['1305']?.text ?? ''), (h['1305']?.text ?? '').slice(0, 160));
     check('反对：条文里标出「情绪 · 反对」', h['1306']?.beta === '1' && /情绪 · 反对/.test(h['1306']?.text ?? ''), (h['1306']?.text ?? '').slice(0, 160));
     check('讲理由的回复（不同意，因为…）绝不折叠也不标情绪', h['1307']?.beta !== '1' && !h['1307']?.emotion, JSON.stringify({ beta: h['1307']?.beta ?? null, emotion: h['1307']?.emotion ?? null }));
     check('情绪折叠不产生账号动作', (probeH.actions ?? []).length === 0, JSON.stringify(probeH.actions));
@@ -1409,7 +1439,7 @@ async function main() {
     }
     const i = probeI.articles ?? {};
     const feedCases = [
-      ['1401', '社交', '交朋友'],
+      ['1401', '期待求取', '交朋友'],
       ['1402', '赞美', '美女啊'],
       ['1403', '支持', '👍好'],
       ['1404', '期待', '我也想去'],
@@ -1450,13 +1480,47 @@ async function main() {
     const j = probeJ.articles ?? {};
     check('截图 6 条全部命中并合并：1501 是代表条、1502~1506 折叠', j['1501']?.beta !== '1' && j['1501']?.emotion === 'praise' && ['1502', '1503', '1504', '1505', '1506'].every((id) => j[id]?.beta === '1'), JSON.stringify(['1501', '1502', '1503', '1504', '1505', '1506'].map((id) => `${id}:${j[id]?.beta ?? '-'}/${j[id]?.emotion ?? '-'}`)));
     // 条文上的条数是**判定当时**的累计值（每条推文各自渲染），最后判定的 1506 才是满员文案。
-    check('满员条文写明「低信息量附和 6 条」+ 类别人数（参与 3 · 赞美 2 · 期待 1）', /低信息量附和 6 条/.test(j['1506']?.text ?? '') && /参与 3/.test(j['1506']?.text ?? '') && /赞美 2/.test(j['1506']?.text ?? '') && /期待 1/.test(j['1506']?.text ?? ''), (j['1506']?.text ?? '').slice(0, 200));
-    check('每条折叠条仍写清本条类别（参与 / 期待 / 赞美）', /情绪 · 参与/.test(j['1503']?.text ?? '') && /情绪 · 期待/.test(j['1502']?.text ?? '') && /情绪 · 赞美/.test(j['1504']?.text ?? ''), JSON.stringify({ e1502: (j['1502']?.text ?? '').slice(0, 80), e1503: (j['1503']?.text ?? '').slice(0, 80), e1504: (j['1504']?.text ?? '').slice(0, 80) }));
+    check('满员条文写明「低信息量附和 6 条」+ 类别人数（参与 3 · 赞美 2 · 期待求取 1）', /低信息量附和 6 条/.test(j['1506']?.text ?? '') && /参与 3/.test(j['1506']?.text ?? '') && /赞美 2/.test(j['1506']?.text ?? '') && /期待求取 1/.test(j['1506']?.text ?? ''), (j['1506']?.text ?? '').slice(0, 200));
+    check('每条折叠条仍写清本条类别（参与 / 期待求取 / 赞美）', /情绪 · 参与/.test(j['1503']?.text ?? '') && /情绪 · 期待求取/.test(j['1502']?.text ?? '') && /情绪 · 赞美/.test(j['1504']?.text ?? ''), JSON.stringify({ e1502: (j['1502']?.text ?? '').slice(0, 80), e1503: (j['1503']?.text ?? '').slice(0, 80), e1504: (j['1504']?.text ?? '').slice(0, 80) }));
     check('折叠条按判定当时的累计数写「还有 N 条」（1502 是第 2 条）', /低信息量附和 2 条/.test(j['1502']?.text ?? '') && /还有 1 条/.test(j['1502']?.text ?? '') && /还有 5 条/.test(j['1506']?.text ?? ''), JSON.stringify({ e1502: (j['1502']?.text ?? '').slice(0, 120), e1506: (j['1506']?.text ?? '').slice(0, 120) }));
     check('详情页主帖本身（id === status id）绝不折叠', j['1912000000000000010']?.beta !== '1', JSON.stringify({ beta: j['1912000000000000010']?.beta ?? null, emotion: j['1912000000000000010']?.emotion ?? null }));
     check('场景 J：讲事情的长回复不折叠', j['1507']?.beta !== '1' && !j['1507']?.emotion, JSON.stringify({ beta: j['1507']?.beta ?? null, emotion: j['1507']?.emotion ?? null }));
     check('场景 J 折叠不产生账号动作', (probeJ.actions ?? []).length === 0, JSON.stringify(probeJ.actions));
     check('场景 J 页面无脚本异常', pageJ.errors.length === 0, pageJ.errors.slice(0, 2).join(' | '));
+
+
+    // ---- 6j. 场景 K：真站第二批 8 条 → 覆盖率判定全部命中并合并（v0.4.8）----
+    console.log('\n场景 K：抽奖帖 8 条（参与/中秋祝福/缺周边/赞美）→ 覆盖率判定 + 合并成 1 条');
+    await configure({
+      ...baseSettings,
+      semantics: { ...baseSettings.semantics, enabled: true, emotion: { enabled: true, mode: 'fold' } },
+      scope: { ...baseSettings.scope, onlyVisible: false, replies: true },
+      action: { hide: true, autoMute: true, autoBlock: false, dryRun: false, muteOnHide: false, actionDelayMs: 300, maxActionsPerHour: 200, maxActionsPerDay: 400 },
+    });
+    const pageK = await openPage(`${BASE}/host/status/1912000000000000020?scenario=k`);
+    let probeK = null;
+    try {
+      probeK = await waitFor(
+        async () => {
+          const p = await pageK.cdp.evaluate(PROBE);
+          const a = p.articles;
+          return ['1602', '1603', '1604', '1605', '1606', '1607', '1608'].every((id) => a[id]?.beta === '1') && a['1601']?.beta !== '1' ? p : null;
+        },
+        { label: '场景 K 八条全部命中并合并', timeoutMs: 60000 },
+      );
+    } catch (error) {
+      probeK = await pageK.cdp.evaluate(PROBE).catch(() => ({ articles: {}, actions: [] }));
+      check('场景 K 八条全部命中并合并', false, String(error.message));
+    }
+    const k = probeK.articles ?? {};
+    check('截图 8 条全部命中并合并：1601 是代表条、其余 7 条折叠', k['1601']?.beta !== '1' && ['1602', '1603', '1604', '1605', '1606', '1607', '1608'].every((id) => k[id]?.beta === '1'), JSON.stringify(['1601', '1602', '1603', '1604', '1605', '1606', '1607', '1608'].map((id) => `${id}:${k[id]?.beta ?? '-'}`)));
+    check('满员条文写明「低信息量附和 8 条」+ 包含问候祝福/期待求取', /低信息量附和 8 条/.test(k['1608']?.text ?? '') && /问候祝福/.test(k['1608']?.text ?? '') && /期待求取/.test(k['1608']?.text ?? ''), (k['1608']?.text ?? '').slice(0, 200));
+    check('每条折叠条写清本条类别（问候祝福 / 期待求取 / 赞美）', /情绪 · 问候祝福/.test(k['1603']?.text ?? '') && /情绪 · 期待求取/.test(k['1605']?.text ?? '') && /情绪 · 赞美/.test(k['1608']?.text ?? ''), JSON.stringify({ e1603: (k['1603']?.text ?? '').slice(0, 70), e1605: (k['1605']?.text ?? '').slice(0, 70), e1608: (k['1608']?.text ?? '').slice(0, 70) }));
+    check('代表条自身也标出类别（参与）', k['1601']?.emotion === 'participation', JSON.stringify({ emotion: k['1601']?.emotion ?? null }));
+    check('场景 K：详情页主帖本身（id === status id）绝不折叠', k['1912000000000000020']?.beta !== '1', JSON.stringify({ beta: k['1912000000000000020']?.beta ?? null }));
+    check('场景 K：讲事情的长回复不折叠', k['1609']?.beta !== '1' && !k['1609']?.emotion, JSON.stringify({ beta: k['1609']?.beta ?? null, emotion: k['1609']?.emotion ?? null }));
+    check('场景 K 折叠不产生账号动作', (probeK.actions ?? []).length === 0, JSON.stringify(probeK.actions));
+    check('场景 K 页面无脚本异常', pageK.errors.length === 0, pageK.errors.slice(0, 2).join(' | '));
 
     // ---- 7. 扩展页面可用性 ----
     console.log('\n扩展页面检查');
