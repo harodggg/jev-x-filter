@@ -151,10 +151,12 @@ export function createPipeline(deps) {
     if (sem.emotion && sem.emotion.enabled === false) return null;
     // 兼容 v0.4.2 的旧开关（foldLowSignal）；新键是 semantics.emotion.*
     if (!sem.emotion && sem.beta?.foldLowSignal === false) return null;
-    if (sem.beta?.foldInReplies === false) return null;
-    if (tweet?.context !== 'reply') return null;
+    // 回复区看 foldInReplies，时间线/推荐流看 foldInFeed（与模型版 β 的开关语义一致）。
+    const isReply = tweet?.context === 'reply';
+    if (isReply && sem.beta?.foldInReplies === false) return null;
+    if (!isReply && sem.beta?.foldInFeed === false) return null;
     const mode = sem.emotion?.mode === 'hide' ? 'hide' : 'fold';
-    return planEmotionFold(observed ?? tweet, semanticRecent.list(), { mode });
+    return planEmotionFold(observed ?? tweet, semanticRecent.list(), { mode, scope: isReply ? 'thread' : 'feed' });
   }
 
   const farmTracker = createFarmTracker();

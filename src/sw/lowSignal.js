@@ -49,9 +49,13 @@ export const EMOTION_CLASSES = {
     label: '喜悦',
     cores: ['哈哈', '嘿嘿', '笑死', '笑不活了', '开心', '高兴', '太好了', '好耶', '爽', '舒服', '绝了', '妙', '有趣', '有意思', '赞', '牛', '牛啊', '太强了', '可爱', '喜欢', '爱了'],
   },
+  greeting: {
+    label: '问候',
+    cores: ['gm', 'gn', '早上好', '早安', '午安', '晚安', '你好', '您好', '大家好', 'hi', 'hello', '哈喽', '新年快乐'],
+  },
   support: {
     label: '支持',
-    cores: ['支持', '赞成', '赞同', '附议', '认同', '同意', '同感', '加油', '顶', '点赞', '好的', '可以', '行的', '收到', '说得对', '有道理', '正解', '1'],
+    cores: ['支持', '赞成', '赞同', '附议', '认同', '同意', '同感', '加油', '顶', '点赞', '好的', '好', '可以', '行的', '收到', '说得对', '有道理', '正解', '1'],
   },
   oppose: {
     label: '反对',
@@ -65,6 +69,18 @@ export const EMOTION_CLASSES = {
     label: '确认',
     cores: ['确定', '确认', '确实', '没错', '没毛病', '对的', '是的', '对啊', '的确', '果然', '正确', '就是这样', '是了', '就是'],
   },
+  praise: {
+    label: '赞美',
+    cores: ['美女', '好看', '好美', '太美了', '太美', '漂亮', '真漂亮', '美极了', '好帅', '帅', '厉害', '优秀', '棒', '太棒了', '不错', '好评', '完美', '绝美'],
+  },
+  wish: {
+    label: '期待',
+    cores: ['我也想去', '想去', '好想去', '想要', '想买', '期待', '蹲一个', '蹲', '求', '许愿', '馋了', '羡慕'],
+  },
+  social: {
+    label: '社交',
+    cores: ['交朋友', '交友', '互关', '互粉', '求关注', '关注一下', '加个好友', '一起玩', '来个好友', '认识一下'],
+  },
   /** 纯 emoji / 表情符号：知道是情绪，但分不出哪一类。 */
   emoji: {
     label: '表情',
@@ -74,7 +90,7 @@ export const EMOTION_CLASSES = {
 
 const INTENSIFIERS = [
   '完全', '非常', '十分', '超级', '绝对', '真的', '实在', '我也', '我也是', '确实是', '确实', '确实很',
-  '确实太', '也太', '有点', '很', '好', '太', '也', '就', '无敌', '特别', '特么', '真是',
+  '确实太', '也太', '有点', '很', '好', '太', '也', '就', '无敌', '特别', '特么', '真是', '真',
 ];
 
 /** 语气词：`认同呀` / `嗯嗯，对` / `实在是太赞了` 这种外围填充不影响判定。 */
@@ -90,11 +106,57 @@ function stripIntensifier(text) {
   return rest;
 }
 
+/**
+ * 连续加强语的**每一步**中间形态。
+ * 独立验证发现的漏判：`真好看` 会被连着削两次（`真` → `好`）变成 `看`，
+ * 中间形态 `好看` 反而丢了。所以这里把每一步都留下。
+ */
+function intensifierVariants(text) {
+  const out = [text];
+  let rest = text;
+  for (let i = 0; i < 2; i += 1) {
+    const hit = INTENSIFIERS.find((word) => rest.startsWith(word) && rest.length > word.length);
+    if (!hit) break;
+    rest = rest.slice(hit.length);
+    out.push(rest);
+  }
+  return out;
+}
+
 function stripFillers(text) {
   let rest = text;
   for (let i = 0; i < 2 && rest.length > 1 && FILLER.test(rest[0]); i += 1) rest = rest.slice(1);
   for (let i = 0; i < 2 && rest.length > 1 && FILLER.test(rest[rest.length - 1]); i += 1) rest = rest.slice(0, -1);
   return rest;
+}
+
+/**
+ * 只削首 / 只削尾的中间形态。
+ * 独立验证发现的漏判：`我服了` 被「先削首再削尾」削成 `服`，反而匹配不上核心 `服了`。
+ */
+function fillerVariants(text) {
+  const out = new Set([text]);
+  let head = text;
+  for (let i = 0; i < 2 && head.length > 1 && FILLER.test(head[0]); i += 1) {
+    head = head.slice(1);
+    out.add(head);
+  }
+  let tail = text;
+  for (let i = 0; i < 2 && tail.length > 1 && FILLER.test(tail[tail.length - 1]); i += 1) {
+    tail = tail.slice(0, -1);
+    out.add(tail);
+  }
+  return out;
+}
+
+/** 程度补语：`难过死了` / `笑死我了` / `气到哭` —— 核心 + 补语仍算同一类情绪。 */
+const COMPLEMENTS = ['死了', '死我了', '死了吧', '爆了', '到哭', '哭了', '麻了', '疯了', '裂开', '到吐', '得想哭', '得要死'];
+
+function stripComplement(text) {
+  for (const suffix of COMPLEMENTS) {
+    if (text.length > suffix.length && text.endsWith(suffix)) return text.slice(0, -suffix.length);
+  }
+  return null;
 }
 
 /** `哈哈哈哈` / `对对对` / `111` 这类重复先收敛成两遍，再按核心短语匹配。 */
@@ -115,9 +177,16 @@ function isRepetition(rest, core) {
 function matchClass(text) {
   const collapsed = collapseRuns(text);
   const variants = new Set();
-  for (const base of [text, collapsed, stripIntensifier(text), stripIntensifier(collapsed)]) {
-    variants.add(base);
+  const bases = new Set([text, collapsed, ...intensifierVariants(text), ...intensifierVariants(collapsed)]);
+  for (const base of bases) {
+    for (const v of fillerVariants(base)) variants.add(v);
     variants.add(stripFillers(base));
+    const withoutComplement = stripComplement(base);
+    if (withoutComplement) {
+      variants.add(withoutComplement);
+      variants.add(stripIntensifier(withoutComplement));
+      for (const v of fillerVariants(withoutComplement)) variants.add(v);
+    }
   }
   let current = collapsed;
   for (let i = 0; i < 3; i += 1) {
@@ -175,19 +244,41 @@ export function emotionLabel(cls) {
  *
  * @param {{id?: string|null, handle?: string|null, text?: string, threadId?: string|null, seq?: number, ts?: number}} target
  * @param {Array<object>} recent 近期观察到的推文（`semanticRecent.list()`）
- * @param {{ mode?: 'fold'|'hide' }} [options]
- *   - `fold`：留最早的一条当代表（页面上加「情绪：XX」徽标），其余折叠
- *   - `hide`：**全部**折叠（用户说的「删除」）—— 连代表条也不显示内容，条上写明情绪类别
+ * @param {{ mode?: 'fold'|'hide', scope?: 'thread'|'feed' }} [options]
+ *   - `mode=fold`：线程里留最早的一条当代表（挂「情绪：XX」徽标），其余折叠；
+ *     `mode=hide`：**全部**折叠（用户说的「删除」），条上写明情绪类别
+ *   - `scope=thread`（回复区）：按「同线程 + 同类」归组；`scope=feed`（时间线/推荐流）：
+ *     没有线程语义，**每条情绪言论各自折叠**并标出类别
  * @returns {null|{duplicateOf: string|null, duplicateOfHandle: string|null, groupKey: string, groupSize: number,
  *   similarity: number, kind: 'emotion', emotion: string, emotionLabel: string, mode: 'fold'|'hide',
- *   representative: boolean, folded: boolean}}
+ *   scope: 'thread'|'feed', representative: boolean, folded: boolean}}
  */
 export function planEmotionFold(target, recent = [], options = {}) {
   const cls = classifyEmotion(target?.text);
   if (!cls) return null;
   const thread = target?.threadId ?? null;
-  if (!thread) return null;
   const mode = options.mode === 'hide' ? 'hide' : 'fold';
+  // 时间线/推荐流：没有线程语义，每条情绪言论各自折叠 + 标类别（用户在时间线上要的正是这个）。
+  const scope = options.scope ?? (target?.context === 'reply' ? 'thread' : 'feed');
+  if (scope === 'feed') {
+    return {
+      duplicateOf: null,
+      duplicateOfHandle: null,
+      groupKey: `em:feed:${cls}`,
+      // 时间线上这条推文的原文预览（≤30 字）：折叠条上写出来，用户不用展开就知道折叠了什么
+      contentPreview: String(target?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 30),
+      groupSize: 1,
+      similarity: 1,
+      kind: 'emotion',
+      emotion: cls,
+      emotionLabel: emotionLabel(cls),
+      mode,
+      scope: 'feed',
+      representative: false,
+      folded: true,
+    };
+  }
+  if (!thread) return null;
   const selfSeq = Number.isFinite(target?.seq) ? target.seq : null;
 
   // 只看**比本条更早观察到**的同线程同类情绪（seq 是观察顺序，并发下也会乱序，所以必须比较 seq）。
@@ -211,6 +302,7 @@ export function planEmotionFold(target, recent = [], options = {}) {
     duplicateOf: first?.id ?? null,
     duplicateOfHandle: first?.handle ?? null,
     groupKey: `em:${thread}:${cls}`,
+    scope: 'thread',
     groupSize,
     similarity: 1,
     kind: 'emotion',

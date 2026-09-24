@@ -12,7 +12,7 @@
 
   const S = globalThis.JevXSelectors;
   const X = globalThis.JevXExtract;
-  const VERSION = '0.4.4';
+  const VERSION = '0.4.5';
 
   const state = {
     settings: null,
@@ -255,13 +255,20 @@
     // 但文案要说清「属于哪一类情绪」以及这是折叠还是隐藏 —— 这正是用户要的那份「信息」。
     const isEmotion = beta?.kind === 'emotion';
     const emotionTag = isEmotion ? `情绪 · ${beta?.emotionLabel ?? '情绪'}` : '';
+    const isFeedEmotion = isEmotion && beta?.scope === 'feed';
     const isAgreement = beta?.kind === 'agreement';
-    const sameText = isEmotion
-      ? label
-        ? `与 @${label} 的同类情绪回复相同`
-        : beta?.mode === 'hide'
-          ? '已隐藏（同线程同类情绪回复）'
-          : '与上一条同类情绪回复相同'
+    const sameText = isFeedEmotion
+      ? (() => {
+          const preview = String(beta?.contentPreview ?? '').trim();
+          const suffix = beta?.mode === 'hide' ? '（已隐藏）' : '（已折叠）';
+          return preview ? `${preview}${suffix}` : `情绪言论${suffix}`;
+        })()
+      : isEmotion
+        ? label
+          ? `与 @${label} 的同类情绪回复相同`
+          : beta?.mode === 'hide'
+            ? '已隐藏（同线程同类情绪回复）'
+            : '与上一条同类情绪回复相同'
       : isAgreement
         ? label
           ? `与 @${label} 的同类附和（情绪/认同/确认）`

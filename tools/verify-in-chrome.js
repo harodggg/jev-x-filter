@@ -308,6 +308,26 @@ function lowSignalThreadHtml() {
 </body></html>`;
 }
 
+/** 场景 I 夹具：时间线上的情绪言论（用户截图那一批：交朋友 / 美女啊 / 👍好 / 我也想去 / Gm / 太美了）。 */
+function emotionFeedHtml() {
+  return `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>时间线情绪夹具</title>
+<style>body{font:14px/1.5 sans-serif;margin:0}article{display:block;padding:12px;border-bottom:1px solid #ddd}</style>
+</head><body>
+<div data-testid="primaryColumn">
+  ${article('1401', 'ann', '交朋友', { displayName: '安南' })}
+  ${article('1402', 'lu', '美女啊', { displayName: '路明非' })}
+  ${article('1403', 'bit', '👍好', { displayName: 'BITWILETH' })}
+  ${article('1404', 'twob', '我也想去🥺', { displayName: '2ewbie' })}
+  ${article('1405', 'yisi', 'Gm', { displayName: '忆思寒' })}
+  ${article('1406', 'barney', '太美了', { displayName: 'Barney' })}
+  <!-- 讲理由的回复与普通内容：绝不折叠 -->
+  ${article('1407', 'argue', '我不同意，公开数据其实是反过来的，去年同类政策让成本涨了三成', { displayName: '反对者' })}
+  ${article('1408', 'ordinary', '今天天气不错，我们去公园散步吧，顺便看看新开的书店', { displayName: '普通用户' })}
+</div>
+</body></html>`;
+}
+
 /* ============================== mock 服务 ============================== *//* ============================== mock 服务 ============================== */
 
 function answersFor(state) {
@@ -475,6 +495,7 @@ function startMockServer() {
     // 注意顺序：场景 H 也是 /status/ 形态的线程页，必须**先**判场景再判路径，
     // 否则会被当成场景 E 的线程夹具（踩过一次：H 的断言全红，其实是夹具路由错了）。
     if (/scenario=h/.test(req.url)) res.end(lowSignalThreadHtml());
+    else if (/scenario=i/.test(req.url)) res.end(emotionFeedHtml());
     else if (/scenario=f/.test(req.url)) res.end(menuTrapHtml());
     else if (/scenario=g/.test(req.url)) res.end(spamSectionHtml());
     else if (/\/status\//.test(req.url)) res.end(replyThreadHtml());
@@ -1308,6 +1329,46 @@ async function main() {
       swCdpH.close();
     }
 
+    // ---- 6h. 场景 I：时间线上的情绪言论（feed 范围）----
+    console.log('\n场景 I：时间线情绪言论（各自折叠 + 标出类别）');
+    await configure({
+      ...baseSettings,
+      semantics: { ...baseSettings.semantics, enabled: true, emotion: { enabled: true, mode: 'fold' } },
+      scope: { ...baseSettings.scope, onlyVisible: false },
+      action: { hide: true, autoMute: true, autoBlock: false, dryRun: false, muteOnHide: false, actionDelayMs: 300, maxActionsPerHour: 200, maxActionsPerDay: 400 },
+    });
+    const pageI = await openPage(`${BASE}/?scenario=i`);
+    let probeI = null;
+    try {
+      probeI = await waitFor(
+        async () => {
+          const p = await pageI.cdp.evaluate(PROBE);
+          const a = p.articles;
+          return ['1401', '1402', '1403', '1404', '1405', '1406'].every((id) => a[id]?.beta === '1') ? p : null;
+        },
+        { label: '场景 I 时间线情绪全部折叠', timeoutMs: 60000 },
+      );
+    } catch (error) {
+      probeI = await pageI.cdp.evaluate(PROBE).catch(() => ({ articles: {}, actions: [] }));
+      check('场景 I 时间线情绪全部折叠', false, String(error.message));
+    }
+    const i = probeI.articles ?? {};
+    const feedCases = [
+      ['1401', '社交', '交朋友'],
+      ['1402', '赞美', '美女啊'],
+      ['1403', '支持', '👍好'],
+      ['1404', '期待', '我也想去'],
+      ['1405', '问候', 'Gm'],
+      ['1406', '赞美', '太美了'],
+    ];
+    for (const [id, label, preview] of feedCases) {
+      check(`时间线情绪 #${id} 折叠并标出「情绪 · ${label}」`, i[id]?.beta === '1' && new RegExp(`情绪 · ${label}`).test(i[id]?.text ?? '') && String(i[id]?.text ?? '').includes(preview), (i[id]?.text ?? '').slice(0, 120));
+    }
+    check('时间线：讲理由的回复绝不折叠', i['1407']?.beta !== '1' && i['1407']?.hidden !== true, JSON.stringify({ beta: i['1407']?.beta ?? null }));
+    check('时间线：普通内容保持可见', i['1408']?.beta !== '1' && i['1408']?.hidden !== true, JSON.stringify({ beta: i['1408']?.beta ?? null }));
+    check('时间线情绪折叠不产生账号动作', (probeI.actions ?? []).length === 0, JSON.stringify(probeI.actions));
+    check('场景 I 页面无脚本异常', pageI.errors.length === 0, pageI.errors.slice(0, 2).join(' | '));
+
     // ---- 7. 扩展页面可用性 ----
     console.log('\n扩展页面检查');
     const optionsProbe = await optionsPage.cdp.evaluate(`(() => {
@@ -1437,7 +1498,7 @@ async function main() {
     check('导入通道可用', listProbe.imported?.ok === true && listProbe.imported.added === 2, JSON.stringify(listProbe.imported ?? {}));
     check('导出内容包含全部账号', /imported_one/.test(listProbe.exported ?? '') && /spammer1|escort4/.test(listProbe.exported ?? ''), listProbe.after?.join(','));
 
-    for (const page of [optionsPage, pageA, pageB, pageC, pageD, pageE, pageF, pageG, pageH, pageH2, popupPage]) page.cdp.close();
+    for (const page of [optionsPage, pageA, pageB, pageC, pageD, pageE, pageF, pageG, pageH, pageH2, pageI, popupPage]) page.cdp.close();
     browser.close();
   } finally {
     try {

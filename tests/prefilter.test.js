@@ -256,7 +256,7 @@ test('新闻/讨论语境引用这句黑话时降级成弱特征，不会因为�
   );
   assert.equal(r.newsContext, true, '新闻语境要被识别');
   assert.ok(r.reasons.includes('zh_body_euphemism'));
-  assert.equal(r.score, 1, '强规则在新闻语境里降级为 1 分（不是 3 分）');
+  assert.equal(r.score, 2, '强规则降级为 1 分，加上弱规则（同一片段）共 2 分，仍不是 3 分的定罪权重');
   // 仍然会让模型看一眼（和场景 A 的「警方通报…约炮平台」同一条路径）：降级发生在闸门，
   // 由模型判断这是新闻而不是招嫖，实测该路径下新闻样本一直是 ignore。
   assert.equal(r.candidate, true);

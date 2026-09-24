@@ -565,13 +565,26 @@ test('情绪言论 hide 模式：全部折叠（用户说的「删除」）', as
   assert.equal(first.accountAction?.kind ?? 'none', 'none');
 });
 
-test('关掉情绪开关后不折叠；时间线上的情绪（无 threadId）也不折叠', async () => {
+test('关掉情绪开关后不折叠；时间线走 feed 范围（各自折叠 + 标类别）', async () => {
   const off = harness({ settingsPatch: { semantics: { ...DEFAULT_SETTINGS.semantics, enabled: true, emotion: { enabled: false, mode: 'fold' } } } });
   await off.pipeline.decide(REPLY('c1', 'reply_a', '生气'));
   const offSecond = await off.pipeline.decide(REPLY('c2', 'reply_b', '无语'));
   assert.equal(offSecond.beta, null, '开关关掉后不折叠');
 
   const timeline = harness({ settingsPatch: emotionSettings() });
-  const t1 = await timeline.pipeline.decide({ id: 'd1', handle: 'x', text: '生气', media: [], context: 'timeline', threadId: null });
-  assert.equal(t1.beta, null, '时间线不处理情绪（只按线程归组）');
+  const t1 = await timeline.pipeline.decide({ id: 'd1', handle: 'x', text: '美女啊', media: [], context: 'timeline', threadId: null });
+  assert.equal(t1.beta?.kind, 'emotion', '时间线上的情绪言论也要折叠并标类别');
+  assert.equal(t1.beta?.scope, 'feed');
+  assert.equal(t1.beta?.emotionLabel, '赞美');
+  assert.equal(t1.beta?.folded, true);
+  assert.equal(t1.band, 'ignore');
+  assert.equal(t1.accountAction?.kind ?? 'none', 'none', '情绪折叠不产生账号动作');
+
+  const argument = await timeline.pipeline.decide({ id: 'd2', handle: 'y', text: '我不同意，公开数据其实是反过来的', media: [], context: 'timeline', threadId: null });
+  assert.equal(argument.beta, null, '讲理由的回复在时间线上也不折叠');
+
+  // 关掉「时间线折叠」（foldInFeed）后不再处理 feed 范围
+  const noFeed = harness({ settingsPatch: { semantics: { ...DEFAULT_SETTINGS.semantics, enabled: true, emotion: { enabled: true, mode: 'fold' }, beta: { ...DEFAULT_SETTINGS.semantics.beta, foldInFeed: false } } } });
+  const t2 = await noFeed.pipeline.decide({ id: 'd3', handle: 'z', text: '太美了', media: [], context: 'timeline', threadId: null });
+  assert.equal(t2.beta, null, 'foldInFeed 关掉后时间线不折叠');
 });
