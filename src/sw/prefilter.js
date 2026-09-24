@@ -218,6 +218,12 @@ export function preScreen(tweet, settings) {
     skip: null,
     newsContext: false,
     shortWithMedia: false,
+    /**
+     * X 自己把这条放在「可能的垃圾信息」分区里（内容脚本读分区标题得到）。
+     * 它**不参与**本地打分（不算 weak 命中，避免把分推到闸门阈值），
+     * 只做两件事：① 不让「正文过短」把这条直接跳过；② 交给闸门给一个 review 下限。
+     */
+    xSpamSection: tweet?.spamSection === true,
   };
 
   if (tweet?.isOwn) {
@@ -273,7 +279,8 @@ export function preScreen(tweet, settings) {
 
   const minLen = settings?.scope?.minTextLength ?? 4;
   // 正文极短、但「显示名本身就是色情引流」的账号照样要送模型。
-  if (text.length < minLen && !hasMedia && !result.strongNameHit) {
+  // 正文极短、但「X 已标垃圾分区」的推文不跳过：那条街上内容层无解，X 的判断是唯一线索。
+  if (text.length < minLen && !hasMedia && !result.strongNameHit && !result.xSpamSection) {
     result.skip = 'too_short_no_media';
     return result;
   }

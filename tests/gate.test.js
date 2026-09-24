@@ -279,3 +279,26 @@ test('农场结构证据：≥3 个账号时不再要求内容侧信号', () => 
   const two = decide(answers({}), { prefilterScore: 0, farmHit: true, farmAccounts: 2, junkProbability: 0.05 }, settings);
   assert.equal(two.band, BAND.ignore);
 });
+
+/**
+ * X 自己标的「可能的垃圾信息」分区（真站截图：正文只有三个字 `已老实` 的那条）。
+ * 它是**结构信号**，不是内容证据：只能给到「隐藏成待确认」，绝不能动账号。
+ */
+test('X 的「可能的垃圾信息」分区 → 只到 review，不动账号', () => {
+  const d = decide(answers({ adult: 0.2, cat: 'other', conf: 0.6 }), { xSpamSection: true, prefilterScore: 0 }, settings);
+  assert.equal(d.band, BAND.review);
+  assert.ok(d.reasons.includes('x_spam_section'));
+  const action = planAccountAction({ band: d.band, settings, budgetRemaining: 100, handle: 'for520vox' });
+  assert.equal(action.kind, 'none', '结构信号永不触发账号动作');
+  assert.equal(action.execute, false);
+});
+
+test('实时内容证据强于 X 的分区信号：该 block 还是 block', () => {
+  const d = decide(
+    answers({ adult: 0.97, sol: 0.95, cat: 'adult_solicitation', conf: 0.9, sev: 3 }),
+    { xSpamSection: true, prefilterScore: 3 },
+    settings,
+  );
+  assert.equal(d.band, BAND.block, '分区信号不能让已经够格的判定降级');
+  assert.ok(!d.reasons.includes('x_spam_section'));
+});

@@ -16,6 +16,7 @@
  *   JEV_API_KEY=xxx JEV_PRESET=typesafe node tools/live-check.js
  *   JEV_API_KEY=xxx JEV_PRESET=zen JEV_MODEL=jev-1.13-free node tools/live-check.js
  */
+import fs from 'node:fs';
 import { JevClient } from '../src/vendor/jev-systemone/dist/index.js';
 import { createAuditor } from '../src/sw/audit.js';
 import { createPipeline } from '../src/sw/pipeline.js';
@@ -343,7 +344,48 @@ const SAMPLES = [
     tweet: { id: 's12', handle: 'fitlife', displayName: '健身博主', text: '今天练了腿，深蹲 100kg 五组，明天继续', media: [], context: 'timeline' },
     expect: 'mustNotHide',
   },
+  {
+    // 以下三条是用户 2026-09 发来的真站截图（X 回复区「可能的垃圾信息」分区）：
+    // 两条显示名带引流词、正文是同一句只差 emoji；第三条正文只有三个字。
+    name: '真站·X 垃圾分区（已老实）',
+    tweet: { id: 'r1', handle: 'for520vox', displayName: '莫长渝', text: '已老实', context: 'reply', spamSection: true, threadId: '1900000000000000009' },
+    expect: 'expectHidden',
+  },
+  {
+    name: '真站·找炮友 + 只入身体',
+    tweet: { id: 'r2', handle: 'jennifer73pe6', displayName: '寒松❤️找炮友🍾', text: '只入身体🥦🌰不入生活', context: 'reply', threadId: '1900000000000000009' },
+    expect: 'expectHidden',
+  },
+  {
+    name: '真站·同城无偿约 + 同句变体',
+    tweet: { id: 'r3', handle: 'jessica31kz6', displayName: '傲旋🌸同城无偿约🌸', text: '只入身体🦵💪不入生活', context: 'reply', threadId: '1900000000000000009' },
+    expect: 'expectHidden',
+  },
 ];
+
+/**
+ * 额外样本（可选）：`JEV_SAMPLES_FILE=/path/samples.json node tools/live-check.js`
+ * 用来把真站随手抓到的样本直接喂进同一条流水线，不用改脚本。
+ * 格式：[{ name, tweet: { handle, displayName, text, context, media?, threadId? }, expect? }]
+ * （expect 省略时按 knownGap 处理：只记录、不计成败。）
+ */
+function loadExtraSamples() {
+  const file = process.env.JEV_SAMPLES_FILE || '';
+  if (!file) return [];
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!Array.isArray(raw)) throw new Error('样本文件必须是数组');
+  return raw.map((item, index) => {
+    if (!item?.tweet || typeof item.tweet.text !== 'string') throw new Error(`样本 ${index} 缺 tweet.text`);
+    return {
+      name: item.name || `额外样本 #${index + 1}`,
+      tweet: { id: item.tweet.id ?? `x${index + 1}`, media: [], context: 'timeline', ...item.tweet },
+      expect: item.expect || 'knownGap',
+    };
+  });
+}
+
+
+const RUN_SAMPLES = [...SAMPLES, ...loadExtraSamples()];
 
 const SOURCE_LABEL = { jev: '四问', triage: '预检', local: '本地', cache: '缓存', disabled: '已关闭' };
 
@@ -370,7 +412,7 @@ async function main() {
   let tokensIn = 0;
   let tokensOut = 0;
 
-  for (const sample of SAMPLES) {
+  for (const sample of RUN_SAMPLES) {
     const before = calls.length;
     currentSkinRatio = typeof sample.tweet.mediaSkinRatio === 'number' ? sample.tweet.mediaSkinRatio : null;
     const started = Date.now();

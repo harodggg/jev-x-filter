@@ -259,6 +259,27 @@ function replyThreadHtml() {
 </body></html>`;
 }
 
+/** 场景 G 夹具：X 自己标的「可能的垃圾信息」分区（真站截图复刻）+ 两条同句短文案农场。 */
+function spamSectionHtml() {
+  return `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>垃圾分区夹具</title>
+<style>body{font:14px/1.5 sans-serif;margin:0}article{display:block;padding:12px;border-bottom:1px solid #ddd}
+h2[role=heading]{margin:8px 12px;font-size:15px}</style>
+</head><body>
+<div data-testid="primaryColumn">
+  <!-- 分区**外面**的一条 3 字推文：仍然按「过短 → 本地跳过」处理（成本护栏，不该被顺手隐藏） -->
+  ${article('9200', 'normal_short', '已老实', { displayName: '普通用户' })}
+  <!-- X 自己写的分区标题：它之后的推文都算「X 已标垃圾」 -->
+  <h2 role="heading">可能的垃圾信息</h2>
+  <!-- 真站截图里的三条：一条正文只有 3 个字；两条同句（只差 emoji）且显示名带引流词 -->
+  ${article('9101', 'for520vox', '已老实', { displayName: '莫长渝' })}
+  ${article('9102', 'jennifer73pe6', '只入身体🥦🌰不入生活', { displayName: '寒松❤️找炮友🍾' })}
+  ${article('9103', 'jessica31kz6', '只入身体🦵💪不入生活', { displayName: '傲旋🌸同城无偿约🌸' })}
+</div>
+<script>${fixtureScript()}</script>
+</body></html>`;
+}
+
 /* ============================== mock 服务 ============================== */
 
 function answersFor(state) {
@@ -296,6 +317,18 @@ function answersFor(state) {
       category: { type: 'choice', choice: 'ordinary', confidence: 0.93, probabilities: { ordinary: 0.93, other: 0.07 } },
     };
   }
+  if (/只入身体/.test(s)) {
+    // 真站样本：两个账号发同一句「只入身体…不入生活」，只在中间各插两个不同 emoji。
+    // 给一条成人内容信号，让「短文案农场」路径真的走通（hide 档，不动账号）。
+    return {
+      ...base,
+      adult: { type: 'noul', noul: 0.86 },
+      solicitation: { type: 'noul', noul: 0.32 },
+      deceptive: { type: 'noul', noul: 0.05 },
+      category: { type: 'choice', choice: 'adult_porn', confidence: 0.86, probabilities: { adult_porn: 0.86, adult_solicitation: 0.1, other: 0.04 } },
+      severity: { type: 'score', score: 2.6, confidence: 0.8, legend: {}, probabilities: {} },
+    };
+  }
   if (/处男|破处|炮友/.test(s)) {
     // 真站实测：adult 0.74 / 类别 adult_solicitation / 置信度 0.25 → 隐藏但不静音
     return {
@@ -325,6 +358,7 @@ function answersFor(state) {
  * 对普通推文给极低分（实测对照 0.02–0.13）。
  */
 function junkFor(state) {
+  if (/只入身体/.test(state)) return 0.82; // 真站样本：模型对「只入身体…不入生活」这类黑话会给高诱饵分 → 升级完整五问
   if (/比我骚|骚/.test(state)) return 0.8; // ≥ 升级线 0.75 → 再问完整五问
   if (/玩的开了|我福不黑/.test(state)) return 0.54; // 实测值：单看文案模型也不确定，靠农场补刀
   if (/ORDINARY/.test(state)) return 0.04;
@@ -412,6 +446,7 @@ function startMockServer() {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     if (/\/status\//.test(req.url)) res.end(replyThreadHtml());
     else if (/scenario=f/.test(req.url)) res.end(menuTrapHtml());
+    else if (/scenario=g/.test(req.url)) res.end(spamSectionHtml());
     else res.end(pageHtml());
   });
   return new Promise((resolve) => {
@@ -1114,6 +1149,51 @@ async function main() {
     check('审计里带上了菜单项清单', (itemMissing?.menu?.items ?? []).length >= 2, JSON.stringify(itemMissing?.menu ?? null));
     check('场景 F 页面无脚本异常', pageF.errors.length === 0, pageF.errors.slice(0, 2).join(' | '));
 
+    // ---- 6f. 场景 G：X 自己标的「可能的垃圾信息」分区 + 短文案农场 ----
+    console.log('\n场景 G：X 的「可能的垃圾信息」分区（结构信号）+ 8 字同句农场');
+    await configure({
+      ...baseSettings,
+      semantics: { ...baseSettings.semantics, enabled: false },
+      scope: { ...baseSettings.scope, onlyVisible: false },
+      action: { hide: true, autoMute: true, autoBlock: false, dryRun: false, muteOnHide: false, actionDelayMs: 300, maxActionsPerHour: 200, maxActionsPerDay: 400 },
+    });
+    const pageG = await openPage(`${BASE}/?scenario=g`);
+    let probeG = null;
+    try {
+      probeG = await waitFor(
+        async () => {
+          const p = await pageG.cdp.evaluate(PROBE);
+          const g = p.articles;
+          return g['9101']?.hidden && g['9102']?.hidden && g['9103']?.hidden ? p : null;
+        },
+        { label: '场景 G 垃圾分区三条被隐藏', timeoutMs: 60000 },
+      );
+    } catch (error) {
+      probeG = await pageG.cdp.evaluate(PROBE).catch(() => ({ articles: {}, actions: [] }));
+      check('场景 G 垃圾分区三条被隐藏', false, String(error.message));
+    }
+    const g = probeG.articles ?? {};
+    check('分区外那条 3 字推文仍然保持可见（本地过短跳过，不被顺手隐藏）', g['9200']?.hidden !== true, JSON.stringify({ band: g['9200']?.band, hidden: g['9200']?.hidden }));
+    check('分区内 3 字推文被隐藏成「待确认」（X 自己标的结构信号）', g['9101']?.hidden === true && g['9101']?.band === 'review', `band=${g['9101']?.band}`);
+    check('判定条写明是 X 自己标的垃圾分区', /可能的垃圾信息/.test(g['9101']?.bar ?? ''), (g['9101']?.bar ?? '').slice(0, 120));
+    check('分区内两条同句推文被隐藏', g['9102']?.hidden === true && g['9103']?.hidden === true, `9102=${g['9102']?.band} 9103=${g['9103']?.band}`);
+    check(
+      '8 字同句（只差 emoji）命中文案农场（阈值 10 时这对整条不参与判定）',
+      /文案农场/.test(g['9103']?.bar ?? '') || /文案农场/.test(g['9102']?.bar ?? ''),
+      (g['9103']?.bar ?? g['9102']?.bar ?? '').slice(0, 140),
+    );
+    check('结构信号与隐藏档都不产生账号动作', (probeG.actions ?? []).length === 0, JSON.stringify(probeG.actions));
+    check('场景 G 页面无脚本异常', pageG.errors.length === 0, pageG.errors.slice(0, 2).join(' | '));
+
+    const swCdpG = await swTarget();
+    if (swCdpG) {
+      const swG = await swCdpG.evaluate(SW_PROBE);
+      check('SW 统计里农场命中 ≥ 1', (swG.stats?.farmHits ?? 0) >= 1, JSON.stringify({ farmHits: swG.stats?.farmHits }));
+      const review = (swG.audit ?? []).find((e) => e.type === 'decision' && e.decision?.band === 'review' && (e.decision?.reasons ?? []).includes('x_spam_section'));
+      check('审计里能看到 x_spam_section 这条原因', Boolean(review), JSON.stringify((swG.audit ?? []).filter((e) => e.type === 'decision').slice(-3).map((e) => e.decision?.reasons)));
+      swCdpG.close();
+    }
+
     // ---- 7. 扩展页面可用性 ----
     console.log('\n扩展页面检查');
     const optionsProbe = await optionsPage.cdp.evaluate(`(() => {
@@ -1243,7 +1323,7 @@ async function main() {
     check('导入通道可用', listProbe.imported?.ok === true && listProbe.imported.added === 2, JSON.stringify(listProbe.imported ?? {}));
     check('导出内容包含全部账号', /imported_one/.test(listProbe.exported ?? '') && /spammer1|escort4/.test(listProbe.exported ?? ''), listProbe.after?.join(','));
 
-    for (const page of [optionsPage, pageA, pageB, pageC, pageD, pageE, pageF, popupPage]) page.cdp.close();
+    for (const page of [optionsPage, pageA, pageB, pageC, pageD, pageE, pageF, pageG, popupPage]) page.cdp.close();
     browser.close();
   } finally {
     try {

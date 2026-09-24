@@ -46,6 +46,8 @@
       hasMedia: media.length > 0,
       context: S.getContext(article),
       promoted: S.isPromoted(article),
+      // X 自己把这条放在「可能的垃圾信息」分区里（免费的本地信号，只用于隐藏成待确认）
+      spamSection: typeof S.isSpamSection === 'function' ? S.isSpamSection(article) : false,
       isOwn: S.isOwn(article),
       lang: article.getAttribute('lang') || document.documentElement.lang || '',
       permalink: location.href,
@@ -54,7 +56,7 @@
 
   /**
    * 文案农场键：与 src/sw/farm.js 的 farmKey 完全同一套归一化规则
-   * （NFKC → 去零宽 → 只留 CJK/字母数字 → 小写），短于 10 个有效字符返回 null。
+   * （NFKC → 去零宽 → 只留 CJK/字母数字 → 小写），短于 8 个有效字符返回 null（与 farm.js 的 FARM_MIN_CHARS 一致，有单测锁住）。
    * 内容脚本是传统脚本、不能 import，所以这里复制一份；单测会断言两边结果一致，防止漂移。
    */
   function farmKey(text) {
@@ -63,7 +65,7 @@
       .replace(/[\u200b-\u200f\u2028-\u202e\u2060\ufeff]/g, '')
       .toLowerCase()
       .replace(/[^\u3400-\u9fff\u3040-\u30ffa-z0-9]/g, '');
-    return normalized.length < 10 ? null : normalized;
+    return normalized.length < 8 ? null : normalized;
   }
 
   /** 字符 3-gram 集合。 */

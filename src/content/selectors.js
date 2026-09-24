@@ -168,6 +168,11 @@
   };
 
   const RECOMMENDED_HEADING = /推荐|为你推荐|发现更多|你可能|Recommended|Discover more|You might like|Trending/i;
+  /**
+   * X 自己给「可能的垃圾信息」分区写的标题（多语言）。命中只意味着**隐藏成待确认**，
+   * 绝不据此动账号 —— X 的判断是参考，不是我们的证据。
+   */
+  const SPAM_SECTION_HEADING = /可能的垃圾信息|可能包含垃圾|疑似垃圾|可能包含敏感|可能含有垃圾|Probable spam|Possible spam|Possibly spam|Likely spam|Probably spam|Show probable spam|Spam replies|Hidden replies/i;
   const REPLY_MARKER = /^(?:Replying to|正在回复|回复)\s*/i;
   const GENERIC_ALT = /^(?:image|photo|picture|图片|图像|照片|media|视频|video)$/i;
   const PROFILE_HREF = /^\/([A-Za-z0-9_]{1,15})\/?$/;
@@ -386,10 +391,30 @@
     return false;
   }
 
+  /**
+   * 推文是否落在 X 自己标注的**「可能的垃圾信息」分区**里。
+   *
+   * 真站样本（用户截图）：回复线程里 X 会把可疑回复折叠成一段，用户点开后那一段上方写着
+   * 「可能的垃圾信息」，其中一条正文只有三个字（`已老实`）—— 内容层完全无解，
+   * 但 **X 自己已经判过了**，这个标题就是一份免费的本地信号（和「推广」标记同一性质）。
+   * 走法与 isRecommended 一样：往回找最近的标题节点，命中就认，最近的标题不是它就不认。
+   */
+  function isSpamSection(article) {
+    let node = article.closest(SEL.cell.join(',')) ?? article;
+    for (let hops = 0; hops < 6 && node; hops++) {
+      for (let prev = node.previousElementSibling, depth = 0; prev && depth < 8; prev = prev.previousElementSibling, depth++) {
+        if (!matchesAny(prev, SEL.heading)) continue;
+        return SPAM_SECTION_HEADING.test(prev.textContent || '');
+      }
+      node = node.parentElement;
+      if (matchesAny(node, SEL.primaryColumn)) break;
+    }
+    return false;
+  }
+
   function isPromoted(article) {
     if (article.closest(SEL.promoted.join(','))) return true;
-    const head = (article.innerText || '').slice(0, 400);
-    return /^(?:Promoted|推广|プロモーション)/m.test(head);
+    const head = (article.innerText || '').slice(0, 400);    return /^(?:Promoted|推广|プロモーション)/m.test(head);
   }
 
   function detectOwnHandle() {
@@ -707,6 +732,7 @@
     SEL,
     MENU_LABEL,
     MENU_ITEM_TESTID,
+    SPAM_SECTION_HEADING,
     ANTI_ACTION,
     QUOTE_ANCESTOR,
     findTweets,
@@ -723,6 +749,7 @@
     isOwn,
     isFocused,
     isRecommended,
+    isSpamSection,
     detectOwnHandle,
     getCaret,
     getOpenMenu,

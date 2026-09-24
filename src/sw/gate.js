@@ -51,6 +51,7 @@ export const REASON_LABEL = {
   vision_model_adult: '视觉模型判定为成人图像',
   low_confidence_review: '模型不确定，降级为待确认',
   profile_solicitation: '账号显示名本身就是色情引流（先隐藏待确认）',
+  x_spam_section: 'X 自己把这批内容标为「可能的垃圾信息」（只隐藏成待确认）',
   farm_repeat: '重复文案农场：同一段文案被多个账号在短时间内复制',
   repeat_in_post: '同一条推文里重复同一句话（刷屏特征）',
   junk_probe: '预检：模型认为这是垃圾/诈骗诱饵/低质填充（先隐藏待确认）',
@@ -195,6 +196,11 @@ export function decide(a, signals = {}, settings) {
   }
 
   /* ---------------- 4) 内容侧证据不足时的兜底：只到待确认 ---------------- */
+  // X 自己的「可能的垃圾信息」分区：一条**结构信号**（不是内容证据），所以永远只到 review，
+  // 绝不据此动账号；上面任何真实内容证据（类别/成人概率/农场/图片/预检）都会先命中并给出更强的档。
+  if (anyEnabled && signals.xSpamSection) {
+    return set(BAND.review, ['x_spam_section']);
+  }
   if (adultEnabled && signals.strongNameHit) {
     return set(BAND.review, ['profile_solicitation', ...(prefilterStrong ? ['prefilter_strong'] : [])]);
   }

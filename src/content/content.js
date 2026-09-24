@@ -12,7 +12,7 @@
 
   const S = globalThis.JevXSelectors;
   const X = globalThis.JevXExtract;
-  const VERSION = '0.4.0';
+  const VERSION = '0.4.1';
 
   const state = {
     settings: null,

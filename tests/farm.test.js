@@ -158,3 +158,26 @@ test('恢复时会淘汰超过窗口的旧簇', () => {
   const b = createFarmTracker({ windowMs: 1000 });
   assert.equal(b.restore(snapshot), 0);
 });
+
+/**
+ * 真站样本（用户截图里 X 标的「可能的垃圾信息」）：
+ * 两个账号发同一句 `只入身体…不入生活`，只在中间各插了两个不同 emoji。
+ * 归一化后都是 8 个有效字符 —— 阈值 10 会让这对**教科书级**的农场整条不参与判定。
+ */
+test('农场：真站样本「同句各插不同 emoji」在 8 个有效字符时也要聚成农场', () => {
+  const tracker = createFarmTracker({ windowMs: 60000 });
+  const a = '只入身体🥦🌰不入生活';
+  const b = '只入身体🦵💪不入生活';
+  assert.equal(farmKey(a), '只入身体不入生活', 'emoji 必须被归一化掉');
+  assert.equal(farmKey(a), farmKey(b));
+  assert.equal(tracker.record(a, 'jennifer73pe6', { nowMs: 1000 }).hit, false);
+  const second = tracker.record(b, 'jessica31kz6', { nowMs: 2000 });
+  assert.equal(second.hit, true, '2 个不同账号 + 同一句（去 emoji 后相同）');
+  assert.equal(second.accounts, 2);
+});
+
+test('农场：归一化后 7 个有效字符仍不参与（阈值 8 的边界）', () => {
+  assert.equal(farmKey('只入身体不入生'), null, '7 个字符');
+  assert.equal(farmKey('只入身体不入生活'), '只入身体不入生活', '8 个字符刚好达标');
+  assert.equal(farmKey('太好了太好了'), null, '6 个字符的大众短语仍然排除');
+});

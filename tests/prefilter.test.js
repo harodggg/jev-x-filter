@@ -206,3 +206,31 @@ test('去符号不会让普通内容变成候选', async () => {
   assert.equal(hit.candidate, false);
   assert.equal(hit.score, 0);
 });
+
+/**
+ * X 标为「可能的垃圾信息」的分区：那条推文正文只有三个字（`已老实`），内容层完全无解，
+ * 但 X 自己判过了。这个结构信号要做两件事：不让「正文过短」把它跳过 + 交给闸门给 review 下限。
+ */
+test('X 的「可能的垃圾信息」分区：过短正文不再被本地跳过，但要标出来', () => {
+  const s = settings;
+  const plain = preScreen(tweet({ text: '已老实' }), s);
+  assert.equal(plain.skip, 'too_short_no_media', '普通情况下 3 个字无媒体仍然跳过（省调用）');
+  assert.equal(plain.xSpamSection, false);
+
+  const flagged = preScreen(tweet({ handle: 'for520vox', text: '已老实', spamSection: true }), s);
+  assert.equal(flagged.skip, null, 'X 已标分区 → 不跳过');
+  assert.equal(flagged.xSpamSection, true);
+  // 这个信号不参与本地打分（不能靠它把分数推过候选线）
+  assert.equal(flagged.score, 0);
+  assert.equal(flagged.candidate, false);
+});
+
+test('X 的「可能的垃圾信息」分区也不绕过白名单/自己发的', () => {
+  const s = settings;
+  assert.equal(preScreen(tweet({ text: '已老实', spamSection: true, isOwn: true }), s).skip, 'own_tweet');
+  const whitelisted = preScreen(tweet({ handle: 'friend', text: '已老实', spamSection: true }), {
+    ...s,
+    whitelist: { ...s.whitelist, handles: ['friend'] },
+  });
+  assert.equal(whitelisted.skip, 'whitelisted_handle');
+});
