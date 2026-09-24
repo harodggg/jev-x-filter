@@ -284,29 +284,31 @@ h2[role=heading]{margin:8px 12px;font-size:15px}</style>
 </body></html>`;
 }
 
-/** 场景 H 夹具：低信息量附和（情绪 / 认同 / 确认）—— 同一线程同类只留最早一条。 */
+/** 场景 H 夹具：情绪言论（愤怒 / 喜悦 / 支持 / 反对 / 悲伤 / 确认 / 表情）—— 同类只留一条 + 标出类别。 */
 function lowSignalThreadHtml() {
   return `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>附和线程夹具</title>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>情绪言论夹具</title>
 <style>body{font:14px/1.5 sans-serif;margin:0}article{display:block;padding:12px;border-bottom:1px solid #ddd}</style>
 </head><body>
 <div data-testid="primaryColumn">
   ${article('1300', 'alice', '关于这项新政策，大家怎么看？', { displayName: 'Alice' })}
-  <!-- 同类「认同」：第一条是代表条，第二条折叠 -->
-  ${article('1301', 'reply_a', '认同', { replyTo: 'alice' })}
-  ${article('1302', 'reply_b', '同意', { replyTo: 'alice' })}
-  <!-- 同类「确认」：第一条是代表条，第二条折叠 -->
-  ${article('1303', 'reply_c', '确定', { replyTo: 'alice' })}
-  ${article('1304', 'reply_d', '确实', { replyTo: 'alice' })}
-  <!-- 情绪类只有一条：不折叠 -->
-  ${article('1305', 'reply_e', '哈哈哈', { replyTo: 'alice' })}
-  <!-- 讲事情的回复：绝不折叠 -->
-  ${article('1306', 'reply_f', '我不同意，公开数据其实是反过来的，去年同类政策让成本涨了三成', { replyTo: 'alice' })}
+  <!-- 愤怒：第一条是代表条（挂徽标），第二条折叠 -->
+  ${article('1301', 'reply_a', '生气', { replyTo: 'alice' })}
+  ${article('1302', 'reply_b', '太离谱了', { replyTo: 'alice' })}
+  <!-- 喜悦 -->
+  ${article('1303', 'reply_c', '哈哈哈', { replyTo: 'alice' })}
+  ${article('1304', 'reply_d', '笑死', { replyTo: 'alice' })}
+  <!-- 支持 -->
+  ${article('1305', 'reply_e', '支持', { replyTo: 'alice' })}
+  <!-- 反对 -->
+  ${article('1306', 'reply_f', '不同意', { replyTo: 'alice' })}
+  <!-- 讲理由的回复：绝不折叠 -->
+  ${article('1307', 'reply_g', '我不同意，公开数据其实是反过来的，去年同类政策让成本涨了三成', { replyTo: 'alice' })}
 </div>
 </body></html>`;
 }
 
-/* ============================== mock 服务 ============================== */
+/* ============================== mock 服务 ============================== *//* ============================== mock 服务 ============================== */
 
 function answersFor(state) {
   const s = String(state);
@@ -646,6 +648,7 @@ const PROBE = `(() => {
       beta: a.getAttribute('data-jevx-beta'),
       betaExpanded: a.getAttribute('data-jevx-beta-expanded'),
       alpha: a.getAttribute('data-jevx-alpha'),
+      emotion: a.getAttribute('data-jevx-emotion'),
       text: (a.innerText || '').replace(/\\s+/g, ' ').slice(0, 220),
       bar: (a.querySelector(':scope > .jevx-bar')?.textContent || '').replace(/\\s+/g, ' ').slice(0, 300),
       noteTitle: a.querySelector(':scope > .jevx-bar .jevx-note')?.getAttribute('title') || '',
@@ -1235,11 +1238,12 @@ async function main() {
       swCdpG.close();
     }
 
-    // ---- 6g. 场景 H：情绪 / 认同 / 确认类附和，同一线程只留一条 ----
-    console.log('\n场景 H：低信息量附和折叠（情绪 / 认同 / 确认）');
+    // ---- 6g. 场景 H：情绪言论（fold / hide）----
+    console.log('\n场景 H：情绪言论折叠与类别标记（愤怒 / 喜悦 / 支持 / 反对）');
+    const emotionSettings = { enabled: true, mode: 'fold' };
     await configure({
       ...baseSettings,
-      semantics: { ...baseSettings.semantics, enabled: true },
+      semantics: { ...baseSettings.semantics, enabled: true, emotion: emotionSettings },
       scope: { ...baseSettings.scope, onlyVisible: false, replies: true },
       action: { hide: true, autoMute: true, autoBlock: false, dryRun: false, muteOnHide: false, actionDelayMs: 300, maxActionsPerHour: 200, maxActionsPerDay: 400 },
     });
@@ -1252,26 +1256,55 @@ async function main() {
           const h = p.articles;
           return h['1302']?.beta === '1' && h['1304']?.beta === '1' ? p : null;
         },
-        { label: '场景 H 出现两条同类附和折叠', timeoutMs: 60000 },
+        { label: '场景 H 出现同类情绪折叠', timeoutMs: 60000 },
       );
     } catch (error) {
       probeH = await pageH.cdp.evaluate(PROBE).catch(() => ({ articles: {}, actions: [] }));
-      check('场景 H 出现两条同类附和折叠', false, String(error.message));
+      check('场景 H 出现同类情绪折叠', false, String(error.message));
     }
     const h = probeH.articles ?? {};
-    check('「认同 → 同意」同类：第二条被折叠，第一条保持为代表条', h['1302']?.beta === '1' && h['1301']?.beta !== '1', JSON.stringify({ 1301: h['1301']?.beta ?? null, 1302: h['1302']?.beta ?? null }));
-    check('「确定 → 确实」同类：第二条被折叠', h['1304']?.beta === '1' && h['1303']?.beta !== '1', JSON.stringify({ 1303: h['1303']?.beta ?? null, 1304: h['1304']?.beta ?? null }));
-    // β 折叠条是 .jevx-beta-bar（不在 :scope > .jevx-bar 里），所以看 text 而不是 bar。
-    check('折叠条文案写清是同类附和（不是「内容相同」）', /同类附和/.test(h['1302']?.text ?? '') && /还有/.test(h['1302']?.text ?? ''), (h['1302']?.text ?? '').slice(0, 140));
-    check('情绪类只有一条时不折叠', h['1305']?.beta !== '1', JSON.stringify({ 1305: h['1305']?.beta ?? null }));
-    check('讲事情的回复（不同意…）绝不折叠', h['1306']?.beta !== '1' && h['1306']?.hidden !== true, JSON.stringify({ beta: h['1306']?.beta ?? null, hidden: h['1306']?.hidden }));
-    check('附和折叠不产生账号动作', (probeH.actions ?? []).length === 0, JSON.stringify(probeH.actions));
+    check('愤怒：第一条是代表条（挂「情绪 · 愤怒」徽标、不折叠）', h['1301']?.emotion === 'anger' && h['1301']?.beta !== '1', JSON.stringify({ emotion: h['1301']?.emotion ?? null, beta: h['1301']?.beta ?? null }));
+    check('愤怒：第二条折叠，条文写明「情绪 · 愤怒」', h['1302']?.beta === '1' && /情绪 · 愤怒/.test(h['1302']?.text ?? ''), (h['1302']?.text ?? '').slice(0, 120));
+    check('喜悦：同类折叠也带类别标签', h['1304']?.beta === '1' && /情绪 · 喜悦/.test(h['1304']?.text ?? ''), (h['1304']?.text ?? '').slice(0, 120));
+    check('支持：单条也标出类别（徽标）', h['1305']?.emotion === 'support', JSON.stringify({ emotion: h['1305']?.emotion ?? null }));
+    check('反对：单条也标出类别（徽标）', h['1306']?.emotion === 'oppose', JSON.stringify({ emotion: h['1306']?.emotion ?? null }));
+    check('讲理由的回复（不同意，因为…）绝不折叠也不标情绪', h['1307']?.beta !== '1' && !h['1307']?.emotion, JSON.stringify({ beta: h['1307']?.beta ?? null, emotion: h['1307']?.emotion ?? null }));
+    check('情绪折叠不产生账号动作', (probeH.actions ?? []).length === 0, JSON.stringify(probeH.actions));
     check('场景 H 页面无脚本异常', pageH.errors.length === 0, pageH.errors.slice(0, 2).join(' | '));
+
+    // hide 模式：全部折叠（用户说的「删除」）
+    await configure({
+      ...baseSettings,
+      semantics: { ...baseSettings.semantics, enabled: true, emotion: { enabled: true, mode: 'hide' } },
+      scope: { ...baseSettings.scope, onlyVisible: false, replies: true },
+      action: { hide: true, autoMute: true, autoBlock: false, dryRun: false, muteOnHide: false, actionDelayMs: 300, maxActionsPerHour: 200, maxActionsPerDay: 400 },
+    });
+    const pageH2 = await openPage(`${BASE}/alice/status/1912000000000000003?scenario=h`);
+    let probeH2 = null;
+    try {
+      probeH2 = await waitFor(
+        async () => {
+          const p = await pageH2.cdp.evaluate(PROBE);
+          const a = p.articles;
+          return a['1301']?.beta === '1' && a['1305']?.beta === '1' ? p : null;
+        },
+        { label: '场景 H（hide 模式）全部折叠', timeoutMs: 60000 },
+      );
+    } catch (error) {
+      probeH2 = await pageH2.cdp.evaluate(PROBE).catch(() => ({ articles: {}, actions: [] }));
+      check('场景 H（hide 模式）全部折叠', false, String(error.message));
+    }
+    const h2 = probeH2.articles ?? {};
+    check('hide 模式：代表条也折叠（情绪言论一条都不显示）', h2['1301']?.beta === '1' && h2['1301']?.emotion == null, JSON.stringify({ beta: h2['1301']?.beta ?? null, emotion: h2['1301']?.emotion ?? null }));
+    check('hide 模式：支持/反对这类单条同样折叠', h2['1305']?.beta === '1' && h2['1306']?.beta === '1', JSON.stringify({ s: h2['1305']?.beta ?? null, o: h2['1306']?.beta ?? null }));
+    check('hide 模式：条文写明「已隐藏」', /已隐藏/.test(h2['1301']?.text ?? ''), (h2['1301']?.text ?? '').slice(0, 140));
+    check('hide 模式：讲理由的回复仍然不折叠', h2['1307']?.beta !== '1', JSON.stringify({ beta: h2['1307']?.beta ?? null }));
+    check('hide 模式页面无脚本异常', pageH2.errors.length === 0, pageH2.errors.slice(0, 2).join(' | '));
 
     const swCdpH = await swTarget();
     if (swCdpH) {
       const swH = await swCdpH.evaluate(SW_PROBE);
-      check('SW 统计里 β 折叠数 ≥ 2（含低信息量附和）', (swH.stats?.semantics?.betaFolds ?? 0) >= 2, JSON.stringify(swH.stats?.semantics ?? null));
+      check('SW 统计里 β 折叠数 ≥ 2（含情绪折叠）', (swH.stats?.semantics?.betaFolds ?? 0) >= 2, JSON.stringify(swH.stats?.semantics ?? null));
       swCdpH.close();
     }
 
@@ -1404,7 +1437,7 @@ async function main() {
     check('导入通道可用', listProbe.imported?.ok === true && listProbe.imported.added === 2, JSON.stringify(listProbe.imported ?? {}));
     check('导出内容包含全部账号', /imported_one/.test(listProbe.exported ?? '') && /spammer1|escort4/.test(listProbe.exported ?? ''), listProbe.after?.join(','));
 
-    for (const page of [optionsPage, pageA, pageB, pageC, pageD, pageE, pageF, pageG, pageH, popupPage]) page.cdp.close();
+    for (const page of [optionsPage, pageA, pageB, pageC, pageD, pageE, pageF, pageG, pageH, pageH2, popupPage]) page.cdp.close();
     browser.close();
   } finally {
     try {

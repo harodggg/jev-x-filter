@@ -12,7 +12,7 @@
 
   const S = globalThis.JevXSelectors;
   const X = globalThis.JevXExtract;
-  const VERSION = '0.4.3';
+  const VERSION = '0.4.4';
 
   const state = {
     settings: null,
@@ -251,24 +251,45 @@
     bar.setAttribute('role', 'note');
 
     const label = resolveDuplicateLabel(beta);
-    // 低信息量附和（情绪 / 认同 / 确认）走同一套 β 折叠条，但文案要说清「同类附和」而不是「内容相同」。
+    // 情绪言论（愤怒 / 喜悦 / 支持 / 反对 / 悲伤 / 确认 / 表情）走同一套 β 折叠条，
+    // 但文案要说清「属于哪一类情绪」以及这是折叠还是隐藏 —— 这正是用户要的那份「信息」。
+    const isEmotion = beta?.kind === 'emotion';
+    const emotionTag = isEmotion ? `情绪 · ${beta?.emotionLabel ?? '情绪'}` : '';
     const isAgreement = beta?.kind === 'agreement';
-    const sameText = isAgreement
+    const sameText = isEmotion
       ? label
-        ? `与 @${label} 的同类附和（情绪/认同/确认）`
-        : '与上一条同类附和（情绪/认同/确认）'
-      : label
-        ? `与 @${label} 的内容相同`
-        : `与 @${String(beta?.duplicateOf ?? '?')} 的内容相同`;
+        ? `与 @${label} 的同类情绪回复相同`
+        : beta?.mode === 'hide'
+          ? '已隐藏（同线程同类情绪回复）'
+          : '与上一条同类情绪回复相同'
+      : isAgreement
+        ? label
+          ? `与 @${label} 的同类附和（情绪/认同/确认）`
+          : '与上一条同类附和（情绪/认同/确认）'
+        : label
+          ? `与 @${label} 的内容相同`
+          : `与 @${String(beta?.duplicateOf ?? '?')} 的内容相同`;
     const groupSize = Number(beta?.groupSize);
     const others = Number.isFinite(groupSize) ? Math.max(0, groupSize - 1) : 0;
-    const baseText = isAgreement ? `${sameText} · 还有 ${others} 条同类回复` : `${sameText} · 还有 ${others} 条相似内容`;
+    const baseText = isEmotion
+      ? others > 0
+        ? `${emotionTag}：${sameText} · 还有 ${others} 条`
+        : `${emotionTag}：${sameText}`
+      : isAgreement
+        ? `${sameText} · 还有 ${others} 条同类回复`
+        : `${sameText} · 还有 ${others} 条相似内容`;
 
     const text = document.createElement('span');
     text.className = 'jevx-beta-text';
     text.textContent = baseText;
     const kindLabel =
-      { verbatim: '内容完全相同', paraphrase: '措辞不同、意思相同', same_claim: '表达同一个说法', agreement: '低信息量附和（情绪/认同/确认）' }[beta?.kind] ?? '相似内容';
+      {
+        verbatim: '内容完全相同',
+        paraphrase: '措辞不同、意思相同',
+        same_claim: '表达同一个说法',
+        agreement: '低信息量附和（情绪/认同/确认）',
+        emotion: isEmotion ? `情绪言论 · ${beta?.emotionLabel ?? ''}（${beta?.mode === 'hide' ? '已隐藏' : '已折叠'}）` : '',
+      }[beta?.kind] ?? '相似内容';
     const detail = [kindLabel];
     if (Number.isFinite(Number(beta?.similarity))) detail.push(`相似度 ${(Number(beta.similarity) * 100).toFixed(0)}%`);
     if (beta?.groupKey) detail.push(`分组 ${beta.groupKey}`);
@@ -360,6 +381,41 @@
     delete article.dataset.jevxAlpha;
   }
 
+  /** 情绪徽标：fold 模式下线程里第一条同类情绪回复保留可见，用徽标标明它是哪一类情绪。 */
+  function buildEmotionBadge(beta) {
+    const badge = document.createElement('div');
+    badge.className = 'jevx-emotion-badge';
+    badge.setAttribute('role', 'note');
+
+    const label = beta?.emotionLabel ?? '情绪';
+    const span = document.createElement('span');
+    span.className = 'jevx-emotion-text';
+    span.textContent = `情绪 · ${label}`;
+    badge.appendChild(span);
+
+    const detail = [];
+    if (Number.isFinite(Number(beta?.groupSize))) detail.push(`同线程同类 ${beta.groupSize} 条`);
+    badge.title = detail.length ? `${label}（${detail.join(' · ')}）` : label;
+    badge.setAttribute('aria-label', `情绪类别：${label}`);
+    return badge;
+  }
+
+  function clearEmotionBadge(article) {
+    if (!article) return;
+    article.querySelectorAll(':scope > .jevx-emotion-badge').forEach((el) => el.remove());
+    delete article.dataset.jevxEmotion;
+  }
+
+  /** 情绪标记：只加徽标（不改变隐藏/折叠与账号动作），让用户一眼看到「这是哪一类情绪」。 */
+  function applyEmotionBadge(article, decision) {
+    const beta = decision?.beta;
+    clearEmotionBadge(article);
+    if (beta?.kind !== 'emotion' || beta.folded === true) return;
+    if (article.dataset.jevxHidden === '1') return;
+    article.insertBefore(buildEmotionBadge(beta), article.firstChild);
+    article.dataset.jevxEmotion = String(beta.emotion ?? '1');
+  }
+
   /** α 标记：只加徽标，**不隐藏、不折叠**，也不改变任何账号动作。 */
   function applyAlphaMark(article, decision) {
     const alpha = decision?.alpha;
@@ -418,6 +474,7 @@
     // 隐藏优先：被过滤的推文不再保留 β 折叠条与 α 徽标（它们不是 .jevx-bar，会被隐藏 CSS 一起藏掉）。
     clearBeta(article);
     clearAlpha(article);
+    clearEmotionBadge(article);
     const bar = buildBar(tweet, decision);
     article.querySelectorAll(':scope > .jevx-bar').forEach((el) => el.remove());
     article.appendChild(bar);
@@ -460,6 +517,7 @@
     for (const article of S.findTweets(document)) {
       clearBeta(article);
       clearAlpha(article);
+      clearEmotionBadge(article);
     }
     updateBadge();
   }
@@ -753,6 +811,7 @@
     } else {
       // 纯增量呈现：α 徽标 + β 折叠条。两者都不改变隐藏判定，也不产生账号动作。
       applyAlphaMark(article, decision);
+      applyEmotionBadge(article, decision);
       applyBetaFold(article, tweet, decision);
     }
 
@@ -787,9 +846,10 @@
     if (key) state.hidden.delete(key);
     article.dataset.jevxHidden = '0';
     article.querySelectorAll(':scope > .jevx-bar').forEach((el) => el.remove());
-    // 节点被虚拟列表回收复用：β 折叠条与 α 徽标必须一起清掉，否则新推文会继承上一条的呈现。
+    // 节点被虚拟列表回收复用：β 折叠条、α 与情绪徽标必须一起清掉，否则新推文会继承上一条的呈现。
     clearBeta(article);
     clearAlpha(article);
+    clearEmotionBadge(article);
   }
 
   async function inspectArticle(article) {
@@ -964,6 +1024,7 @@
       farmRetroHidden: state.farmRetroHidden ?? 0,
       betaFolded: countBetaMarked(),
       alphaMarked: countAlphaMarked(),
+      emotionMarked: S.findTweets(document).filter((a) => a.dataset.jevxEmotion).length,
       lastActionError: state.lastActionError ?? null,
       actionErrors: state.actionErrors.slice(-10),
     }),

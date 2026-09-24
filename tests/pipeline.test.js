@@ -506,8 +506,10 @@ test('缓存指纹覆盖动作与预检/农场配置：切换「自动静音」�
 });
 
 /**
- * β 的本地分支：「情绪 / 认同 / 确认」这类低信息量附和，同一线程只留最早一条。
- * 它和模型版 β 一样**只做展示**：不改变 band、不改变 accountAction（不变量 I1）。
+ * β 的本地分支：**情绪言论**（愤怒 / 喜悦 / 支持 / 反对 / 悲伤 / 确认 / 表情）的折叠。
+ * fold 模式：同类情绪第一条是代表条（页面挂「情绪 · XX」徽标），第二条起折叠。
+ * hide 模式：全部折叠（用户说的「删除」）。
+ * 两种模式都**只做展示**：不改变 band、不改变 accountAction（不变量 I1）。
  */
 const REPLY = (id, handle, text, seq) => ({
   id,
@@ -519,41 +521,57 @@ const REPLY = (id, handle, text, seq) => ({
   seq,
 });
 
-test('低信息量附和：同线程第二条起才折叠，且只折叠同类', async () => {
-  const { pipeline } = harness({ settingsPatch: { semantics: { ...DEFAULT_SETTINGS.semantics, enabled: true, beta: { ...DEFAULT_SETTINGS.semantics.beta, enabled: true } } } });
-  const first = await pipeline.decide(REPLY('a1', 'reply_a', '认同'));
-  const second = await pipeline.decide(REPLY('a2', 'reply_b', '确定'));
-  const third = await pipeline.decide(REPLY('a3', 'reply_c', '确实'));
-  const substantive = await pipeline.decide(REPLY('a4', 'reply_d', '我不同意，公开数据其实是反过来的，去年同类政策让成本涨了三成'));
+const emotionSettings = (patch = {}) => ({
+  semantics: { ...DEFAULT_SETTINGS.semantics, enabled: true, emotion: { enabled: true, mode: 'fold', ...patch } },
+});
 
-  assert.equal(first.beta, null, '第一条是代表条，自己不折叠');
-  assert.equal(second.beta, null, '「确定」和「认同」不是同一类 → 不折叠');
-  assert.equal(third.beta?.kind, 'agreement');
-  assert.equal(third.beta?.folded, true, '「确实」与「确定」同类 → 折叠');
-  assert.equal(third.beta?.duplicateOf, 'a2', '指向同类里最早的那条');
-  assert.equal(third.beta?.groupSize, 2);
-  assert.equal(substantive.beta, null, '讲事情的回复绝不折叠');
+test('情绪言论：同类第一条是代表条、第二条起折叠；不同类别互不影响', async () => {
+  const { pipeline } = harness({ settingsPatch: emotionSettings() });
+  const anger1 = await pipeline.decide(REPLY('a1', 'reply_a', '生气'));
+  const anger2 = await pipeline.decide(REPLY('a2', 'reply_b', '太离谱了'));
+  const joy = await pipeline.decide(REPLY('a3', 'reply_c', '哈哈哈'));
+  const support = await pipeline.decide(REPLY('a4', 'reply_d', '支持'));
+  const argument = await pipeline.decide(REPLY('a5', 'reply_e', '我不同意，公开数据其实是反过来的，去年同类政策让成本涨了三成'));
 
-  // 纯展示：band 与账号动作不受影响
-  for (const d of [first, second, third, substantive]) {
+  assert.equal(anger1.beta?.kind, 'emotion');
+  assert.equal(anger1.beta?.emotion, 'anger');
+  assert.equal(anger1.beta?.emotionLabel, '愤怒');
+  assert.equal(anger1.beta?.representative, true);
+  assert.equal(anger1.beta?.folded, false, '第一条是代表条 → 挂徽标，不折叠');
+
+  assert.equal(anger2.beta?.folded, true);
+  assert.equal(anger2.beta?.duplicateOf, 'a1');
+  assert.equal(anger2.beta?.groupSize, 2);
+
+  assert.equal(joy.beta?.emotion, 'joy');
+  assert.equal(joy.beta?.representative, true, '不同类别各自算代表条');
+  assert.equal(support.beta?.emotion, 'support');
+  assert.equal(argument.beta, null, '讲理由的回复不是情绪言论');
+
+  for (const d of [anger1, anger2, joy, support, argument]) {
     assert.equal(d.band, 'ignore');
-    assert.equal(d.accountAction?.kind ?? 'none', 'none', '只跳过判定，不产生任何账号动作');
+    assert.equal(d.accountAction?.kind ?? 'none', 'none', '情绪折叠不产生账号动作');
   }
 });
 
-test('关掉「折叠情绪/认同/确认类附和」开关后不再折叠', async () => {
-  const beta = { ...DEFAULT_SETTINGS.semantics.beta, enabled: true, foldLowSignal: false };
-  const { pipeline } = harness({ settingsPatch: { semantics: { ...DEFAULT_SETTINGS.semantics, enabled: true, beta } } });
-  await pipeline.decide(REPLY('b1', 'reply_a', '认同'));
-  const second = await pipeline.decide(REPLY('b2', 'reply_b', '同意'));
-  assert.equal(second.beta, null, '开关关掉后不折叠');
+test('情绪言论 hide 模式：全部折叠（用户说的「删除」）', async () => {
+  const { pipeline } = harness({ settingsPatch: emotionSettings({ mode: 'hide' }) });
+  const first = await pipeline.decide(REPLY('b1', 'reply_a', '生气'));
+  const second = await pipeline.decide(REPLY('b2', 'reply_b', '无语'));
+  assert.equal(first.beta?.mode, 'hide');
+  assert.equal(first.beta?.folded, true, 'hide 模式下第一条也折叠');
+  assert.equal(second.beta?.groupSize, 2);
+  assert.equal(first.band, 'ignore');
+  assert.equal(first.accountAction?.kind ?? 'none', 'none');
 });
 
-test('时间线上的低信息量附和（没有 threadId）不折叠：宁可少折叠', async () => {
-  const { pipeline } = harness({ settingsPatch: { semantics: { ...DEFAULT_SETTINGS.semantics, enabled: true, beta: { ...DEFAULT_SETTINGS.semantics.beta, enabled: true } } } });
-  const timeline = { id: 'c1', handle: 'x', text: '认同', media: [], context: 'timeline', threadId: null };
-  const first = await pipeline.decide(timeline);
-  const second = await pipeline.decide({ ...timeline, id: 'c2', handle: 'y', text: '同意' });
-  assert.equal(first.beta, null);
-  assert.equal(second.beta, null, '时间线不折叠（只按线程归组）');
+test('关掉情绪开关后不折叠；时间线上的情绪（无 threadId）也不折叠', async () => {
+  const off = harness({ settingsPatch: { semantics: { ...DEFAULT_SETTINGS.semantics, enabled: true, emotion: { enabled: false, mode: 'fold' } } } });
+  await off.pipeline.decide(REPLY('c1', 'reply_a', '生气'));
+  const offSecond = await off.pipeline.decide(REPLY('c2', 'reply_b', '无语'));
+  assert.equal(offSecond.beta, null, '开关关掉后不折叠');
+
+  const timeline = harness({ settingsPatch: emotionSettings() });
+  const t1 = await timeline.pipeline.decide({ id: 'd1', handle: 'x', text: '生气', media: [], context: 'timeline', threadId: null });
+  assert.equal(t1.beta, null, '时间线不处理情绪（只按线程归组）');
 });

@@ -629,3 +629,26 @@ REFERENCES:
 - **AC-β-LS6**：开关打开时，被「过短无媒体」本地跳过的回复**照样折叠**（跳过的是判定与账号动作，不是展示整理）。
 
 验证：`tests/lowSignal.test.js`（6 组）、`tests/pipeline.test.js`（3 组集成）、端到端场景 H（7 项断言，125/125）。
+---
+
+## 附：v0.4.4 情绪言论（愤怒 / 喜悦 / 支持 / 反对…）（Lead 追加，2026-09）
+
+用户在 β 验收后又提了两条：「情绪 认同 确定 之类的应该只显示一个」→（v0.4.2 落地），
+以及「把所有的情绪言论给折叠/删除，然后给予愤怒，喜悦，支持，反对，之类的信息」（本附录）。
+
+- **分类**：`decision.beta.kind = 'emotion'`，附 `emotion`（anger/joy/support/oppose/sadness/confirmation/emoji）
+  与 `emotionLabel`（愤怒/喜悦/支持/反对/悲伤/确认/表情），外加 `mode`（fold/hide）、
+  `representative`（是否代表条）、`groupSize`、`groupKey`（`em:<threadId>:<class>`）。
+- **AC-EMO1**：同线程同类情绪 ≥2 条时，fold 模式只保留第一条（`representative:true`、`folded:false`，页面挂
+  「情绪 · XX」徽标），其余折叠（`folded:true`，条上写「情绪 · XX：… 还有 N 条」，可展开）。
+- **AC-EMO2**：`hide` 模式（用户说的「删除」）下，**所有**情绪回复都 `folded:true` —— 一条都不显示内容，
+  条上写明类别。
+- **AC-EMO3**：不同类别各自归组（2 条愤怒 + 2 条喜悦 → 两条代表 + 两条折叠），互不影响。
+- **AC-EMO4（保守性）**：只有「归一化后 ≤12 字符且整串恰好是一句情绪短语」才算情绪；
+  `我不同意，公开数据其实是反过来的`（讲理由）/ 疑问句 / 带数字或链接 / 超长文本**一律不折叠**。
+- **AC-EMO5（范围）**：只在回复区、同一 `threadId` 内生效；时间线不处理。代表条由 **seq（观察顺序）** 决定，
+  并发判定下不乱序。
+- **AC-EMO6（不影响判定）**：`band` / `accountAction` 与不带情绪层时**完全一致**（不变量 I1）；
+  `semantics.emotion.enabled=false` 或旧键 `semantics.beta.foldLowSignal=false` 时新增产物为 0。
+
+验证：`tests/lowSignal.test.js`（8 组）、`tests/pipeline.test.js`（3 组集成）、端到端场景 H（fold + hide 共 13 项断言）。

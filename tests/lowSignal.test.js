@@ -1,91 +1,123 @@
 /**
- * 「情绪 / 认同 / 确认」这类**没有实质内容的附和**：同一线程只留最早一条。
+ * 情绪 / 态度分类与折叠计划（本地、0 次模型调用）。
  *
- * 用户 2026-09 的需求：「情绪 认同 确定 之类的应该只显示一个」。
- * 它们彼此字符串不同（`认同` / `确定` / `哈哈哈`），3-gram 相似度与文案农场都抓不到，
- * 所以这里用一版本地分类（0 次模型调用）把它们按「同线程 + 同类」折叠。
+ * 需求：「把所有的情绪言论给折叠/删除，然后给予愤怒，喜悦，支持，反对，之类的信息」。
+ * 分类是**保守**的：只有「整串恰好是某条情绪短语」（可带加强语/语气词）才算情绪言论，
+ * 讲理由、提问题、带数字/链接、超长的一律不折叠 —— 要折叠的是情绪，不是论点。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LOW_SIGNAL_MAX_CHARS, classifyLowSignal, planLowSignalFold } from '../src/sw/lowSignal.js';
+import {
+  EMOTION_CLASSES,
+  LOW_SIGNAL_MAX_CHARS,
+  classifyEmotion,
+  classifyLowSignal,
+  planEmotionFold,
+} from '../src/sw/lowSignal.js';
 
-test('附和分类：认同 / 确认 / 情绪三类正例', () => {
-  for (const text of ['认同', '同意', '赞成', '赞同', '支持', '附议', '同感', '说得对', '有道理', '对的', '是的', '没错', '没毛病', '我也认同', '完全同意', '认同呀', '对对对', '支持支持', '+1', '111', '嗯嗯，对']) {
-    assert.equal(classifyLowSignal(text), 'agreement', text);
+test('情绪分类：六类 + 表情，正例逐条命中', () => {
+  const cases = {
+    anger: ['生气', '气死我了', '太过分了', '离谱', '无语', '服了', '垃圾', '滚', '妈的', '🤬🤬'],
+    joy: ['哈哈', '哈哈哈', '嘿嘿', '笑死', '开心', '太好了', '绝了', '太赞了', '😄😄'],
+    support: ['支持', '同意', '认同', '赞同', '加油', '说得对', '有道理', '我也认同', '+1', '111'],
+    oppose: ['反对', '不同意', '不认同', '不行', '拒绝', '呵呵', '算了吧'],
+    sadness: ['难过', '泪目', '呜呜', '心碎', '唉'],
+    confirmation: ['确定', '确实', '没错', '没毛病', '对的', '就是这样'],
+  };
+  for (const [cls, texts] of Object.entries(cases)) {
+    for (const text of texts) {
+      // 纯 emoji 会落到 `emoji`（知道是情绪但分不出哪一类），其余必须命中对应类别
+      const got = classifyEmotion(text);
+      const expect = cls === 'anger' && text.startsWith('🤬') ? 'emoji' : cls === 'joy' && text.startsWith('😄') ? 'emoji' : cls;
+      assert.equal(got, expect, `${text} → ${got}（期望 ${expect}）`);
+    }
   }
-  for (const text of ['确定', '确认', '确实', '的确', '果然', '正确', '就是这样']) {
-    assert.equal(classifyLowSignal(text), 'confirmation', text);
-  }
-  for (const text of ['哈哈', '哈哈哈', '哈哈哈哈', '嘿嘿', '笑死', '泪目', '呜呜', '爱了', '好可爱', '喜欢', '实在是太赞了', '😂😂', '❤️']) {
-    assert.equal(classifyLowSignal(text), 'emotion', text);
-  }
+  assert.equal(EMOTION_CLASSES.emoji.label, '表情');
+  assert.equal(classifyEmotion('😂😂'), 'emoji');
 });
 
-test('附和分类：讲事情的回复绝不折叠（否定 / 理由 / 疑问 / 数字 / 链接 / 长文本）', () => {
+test('兼容旧名 classifyLowSignal：支持→agreement、确认→confirmation、其余→emotion', () => {
+  assert.equal(classifyLowSignal('认同'), 'agreement');
+  assert.equal(classifyLowSignal('确定'), 'confirmation');
+  assert.equal(classifyLowSignal('哈哈哈'), 'emotion');
+  assert.equal(classifyLowSignal('生气'), 'emotion');
+  assert.equal(classifyLowSignal('我不同意，公开数据其实是反过来的'), null);
+});
+
+test('情绪分类：讲事情的回复绝不当作情绪（理由 / 转折 / 疑问 / 数字 / 链接 / 长文本）', () => {
   const mustNotFold = [
-    '我不同意',
-    '不确定',
-    '不认同',
-    '不对',
-    '反对这个方案',
-    '我没有意见',
-    '确实有问题',
-    '我支持这个政策，因为方向是对的',
-    '同意，但前提是数据要公开',
+    '我不同意，公开数据其实是反过来的',
+    '不同意，但前提是数据要公开',
+    '反对这个方案，因为成本太高了',
     '为什么会这样？',
-    '我觉得应该先讨论',
     '3 天后再说',
     'https://t.co/abcdefg',
-    '哈哈哈这也太好笑了我笑了五分钟',
+    '我觉得应该先讨论',
+    '这个方案的成本太高了',
+    '数据统计显示成本上升了三成',
     `这是一个很长很长的回复${'啊'.repeat(LOW_SIGNAL_MAX_CHARS)}`,
   ];
-  for (const text of mustNotFold) assert.equal(classifyLowSignal(text), null, text);
+  for (const text of mustNotFold) assert.equal(classifyEmotion(text), null, text);
 });
 
-test('附和分类：空文本 / 纯标点不折叠（孤立的问号是内容）', () => {
-  assert.equal(classifyLowSignal(''), null);
-  assert.equal(classifyLowSignal('   '), null);
-  assert.equal(classifyLowSignal('？'), null);
-  assert.equal(classifyLowSignal('。。。'), null);
+test('情绪分类：空文本 / 纯标点不算情绪（孤立的问号是内容）', () => {
+  assert.equal(classifyEmotion(''), null);
+  assert.equal(classifyEmotion('   '), null);
+  assert.equal(classifyEmotion('？'), null);
+  assert.equal(classifyEmotion('。。。'), null);
 });
 
-test('同线程同类附和才折叠，且指向最早的那条', () => {
+test('fold 模式：同类情绪第一条是代表条（挂徽标），第二条起折叠', () => {
   const recent = [
-    { id: 'a1', handle: 'reply_a', text: '认同', threadId: 'T1', seq: 1, ts: 1 },
-    { id: 'a2', handle: 'reply_b', text: '确实', threadId: 'T1', seq: 2, ts: 2 },
-    { id: 'a3', handle: 'reply_c', text: '我不同意，公开数据其实是反过来的', threadId: 'T1', seq: 3, ts: 3 },
-  ];
-  const second = planLowSignalFold({ id: 'a4', handle: 'reply_d', text: '确定', threadId: 'T1', seq: 4 }, recent);
-  assert.equal(second?.kind, 'agreement');
-  assert.equal(second?.folded, true);
-  assert.equal(second?.duplicateOf, 'a2', '同类里最早的那条（确实）');
-  assert.equal(second?.duplicateOfHandle, 'reply_b');
-  assert.equal(second?.groupSize, 2, '同类只有两条时才报 2');
-  assert.equal(second?.lowSignal, 'confirmation');
-  assert.match(second?.groupKey ?? '', /^ls:T1:/);
-
-  const first = planLowSignalFold({ id: 'a2', handle: 'reply_b', text: '确实', threadId: 'T1', seq: 2 }, [
-    { id: 'a3', handle: 'reply_c', text: '我不同意，公开数据其实是反过来的', threadId: 'T1', seq: 3, ts: 3 },
-  ]);
-  assert.equal(first, null, '同类里没有更早的 → 不折叠（它是代表条）');
-});
-
-test('不折叠的边界：不同线程 / 不同类 / 没有 threadId / 自己就是实质回复', () => {
-  const recent = [{ id: 'a1', handle: 'reply_a', text: '认同', threadId: 'T1', seq: 1, ts: 1 }];
-  assert.equal(planLowSignalFold({ id: 'x1', text: '认同', threadId: 'T2', seq: 2 }, recent), null, '跨线程不折叠');
-  assert.equal(planLowSignalFold({ id: 'x2', text: '确定', threadId: 'T1', seq: 3 }, recent), null, '同类才折叠（认同 vs 确定）');
-  assert.equal(planLowSignalFold({ id: 'x3', text: '认同', threadId: null, seq: 4 }, recent), null, '没有 threadId 不折叠');
-  assert.equal(planLowSignalFold({ id: 'x4', text: '我不同意，公开数据其实是反过来的', threadId: 'T1', seq: 5 }, recent), null);
-  assert.equal(planLowSignalFold({ id: 'a1', text: '认同', threadId: 'T1', seq: 1 }, recent), null, '不会把自己当成参照');
-});
-
-test('同类附和连续出现时 groupSize 递增（只留最早一条）', () => {
-  const recent = [
-    { id: 'a1', handle: 'r1', text: '认同', threadId: 'T1', seq: 1, ts: 1 },
-    { id: 'a2', handle: 'r2', text: '同意', threadId: 'T1', seq: 2, ts: 2 },
+    { id: 'a1', handle: 'r1', text: '生气', threadId: 'T1', seq: 1, ts: 1 },
+    { id: 'a2', handle: 'r2', text: '太离谱了', threadId: 'T1', seq: 2, ts: 2 },
     { id: 'a3', handle: 'r3', text: '支持', threadId: 'T1', seq: 3, ts: 3 },
   ];
-  const third = planLowSignalFold({ id: 'a4', handle: 'r4', text: '我也认同', threadId: 'T1', seq: 4 }, recent);
-  assert.equal(third?.duplicateOf, 'a1');
-  assert.equal(third?.groupSize, 4);
+  const first = planEmotionFold({ id: 'a1', handle: 'r1', text: '生气', threadId: 'T1', seq: 1 }, recent, { mode: 'fold' });
+  assert.equal(first.emotion, 'anger');
+  assert.equal(first.emotionLabel, '愤怒');
+  assert.equal(first.representative, true);
+  assert.equal(first.folded, false, '代表条不折叠 → 页面挂「情绪 · 愤怒」徽标');
+  assert.equal(first.groupSize, 1, '决定第一条时还不知道后面有几条');
+
+  const second = planEmotionFold({ id: 'a2', handle: 'r2', text: '太离谱了', threadId: 'T1', seq: 2 }, recent, { mode: 'fold' });
+  assert.equal(second.emotion, 'anger');
+  assert.equal(second.representative, false);
+  assert.equal(second.folded, true);
+  assert.equal(second.duplicateOf, 'a1', '指向同类里最早的那条');
+  assert.equal(second.groupSize, 2);
+  assert.equal(second.mode, 'fold');
+
+  const support = planEmotionFold({ id: 'a3', handle: 'r3', text: '支持', threadId: 'T1', seq: 3 }, recent, { mode: 'fold' });
+  assert.equal(support.emotion, 'support');
+  assert.equal(support.representative, true, '不同类别各自算一条代表');
+});
+
+test('hide 模式：全部折叠（用户说的「删除」），连代表条也不留', () => {
+  const recent = [{ id: 'a1', handle: 'r1', text: '生气', threadId: 'T1', seq: 1, ts: 1 }];
+  const first = planEmotionFold({ id: 'a1', handle: 'r1', text: '生气', threadId: 'T1', seq: 1 }, recent, { mode: 'hide' });
+  assert.equal(first.mode, 'hide');
+  assert.equal(first.representative, false);
+  assert.equal(first.folded, true, 'hide 模式下第一条也折叠');
+  const single = planEmotionFold({ id: 'z1', handle: 'z', text: '支持', threadId: 'T9', seq: 9 }, [], { mode: 'hide' });
+  assert.equal(single.folded, true);
+});
+
+test('并发语义：seq 决定谁是代表条（后到的不会把先到的挤掉）', () => {
+  const window = [
+    { id: 'a1', handle: 'r1', text: '生气', threadId: 'T1', seq: 1, ts: 1 },
+    { id: 'a2', handle: 'r2', text: '无语', threadId: 'T1', seq: 2, ts: 2 },
+  ];
+  // 判定 a1 时窗口里已经有 a2（观察先于判定，并发下会乱序）—— a1 仍然是代表条
+  const a1 = planEmotionFold({ id: 'a1', handle: 'r1', text: '生气', threadId: 'T1', seq: 1 }, window, { mode: 'fold' });
+  assert.equal(a1.representative, true);
+  assert.equal(a1.folded, false);
+  assert.equal(a1.duplicateOf, null, '它是最早的，没有参照');
+});
+
+test('不折叠的边界：不同线程 / 没有 threadId / 不是情绪', () => {
+  const recent = [{ id: 'a1', handle: 'r1', text: '生气', threadId: 'T1', seq: 1, ts: 1 }];
+  assert.equal(planEmotionFold({ id: 'x1', text: '生气', threadId: 'T2', seq: 2 }, recent, { mode: 'fold' }).groupSize, 1, '跨线程互不影响');
+  assert.equal(planEmotionFold({ id: 'x2', text: '生气', threadId: null, seq: 3 }, recent, { mode: 'fold' }), null, '没有 threadId 不处理');
+  assert.equal(planEmotionFold({ id: 'x3', text: '我不同意，公开数据其实是反过来的', threadId: 'T1', seq: 4 }, recent, { mode: 'fold' }), null, '论点不是情绪');
 });

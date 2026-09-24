@@ -105,7 +105,14 @@
           </label>
           <label class="check"><input type="checkbox" data-path="semantics.beta.foldInFeed" checked /><span>在时间线里也折叠重复信息（β）</span></label>
           <label class="check"><input type="checkbox" data-path="semantics.beta.foldInReplies" checked /><span>在回复区里折叠重复信息（β）</span></label>
-          <label class="check"><input type="checkbox" data-path="semantics.beta.foldLowSignal" checked /><span>折叠情绪 / 认同 / 确认类附和<span class="note">（同一线程只留一条，可展开）</span></span></label>
+          <label class="check"><input type="checkbox" data-path="semantics.emotion.enabled" checked /><span>整理情绪言论<span class="note">（愤怒 / 喜悦 / 支持 / 反对 / 悲伤 / 确认 / 表情；本地判定，0 次调用）</span></span></label>
+          <label>
+            情绪言论怎么处理
+            <select data-path="semantics.emotion.mode">
+              <option value="fold" selected>折叠：同类只留一条（挂「情绪 · XX」徽标），其余折叠可展开</option>
+              <option value="hide">隐藏：全部折叠，一条都不显示（条上写明情绪类别）</option>
+            </select>
+          </label>
           <label class="check"><input type="checkbox" data-path="semantics.alpha.enabled" checked /><span>α：标记特殊观点<span class="note">（只标记，不隐藏）</span></span></label>
           <label class="check"><input type="checkbox" data-path="semantics.alpha.onlyInReplies" checked /><span>α 只在回复区生效<span class="note">（时间线上不标）</span></span></label>
           <label>

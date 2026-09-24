@@ -16,7 +16,7 @@
 import { buildJunkProbe, buildRequest, buildState, readAnswers, readJunkAnswer } from './classifier.js';
 import { decide as gateDecide, describeReasons, planAccountAction, BAND } from './gate.js';
 import { createFarmTracker, hasRepeatedLine } from './farm.js';
-import { planLowSignalFold } from './lowSignal.js';
+import { planEmotionFold } from './lowSignal.js';
 import { mediaSuspicion } from './media.js';
 import { preScreen } from './prefilter.js';
 import { createRecentWindow, planSemanticCall, readSemanticsAnswers } from './semantics.js';
@@ -141,17 +141,20 @@ export function createPipeline(deps) {
   /** 最近收到的推文输入（排障用：内容脚本到底抽到了什么 context / threadId / 文本）。 */
   const recentInputs = [];
   /**
-   * β 的本地分支：情绪 / 认同 / 确认 这类「没有实质内容的附和」同一线程只留最早一条。
+   * β 的本地分支：**情绪言论**（愤怒 / 喜悦 / 支持 / 反对 / 悲伤 / 确认 / 表情）的折叠计划。
    * 0 次模型调用；纯展示，绝不参与 band / accountAction（不变量 I1）。
-   * 只对回复区生效（按键 threadId 归组），并且尊重用户开关。
+   * 只对回复区生效（按键 threadId 归组），并尊重用户开关与折叠/隐藏模式。
    */
   function planLocalFold(tweet, observed, settings) {
-    if (!settings.semantics?.enabled) return null;
-    if (settings.semantics?.beta?.enabled === false) return null;
-    if (settings.semantics?.beta?.foldLowSignal === false) return null;
-    if (settings.semantics?.beta?.foldInReplies === false) return null;
+    const sem = settings.semantics;
+    if (!sem?.enabled) return null;
+    if (sem.emotion && sem.emotion.enabled === false) return null;
+    // 兼容 v0.4.2 的旧开关（foldLowSignal）；新键是 semantics.emotion.*
+    if (!sem.emotion && sem.beta?.foldLowSignal === false) return null;
+    if (sem.beta?.foldInReplies === false) return null;
     if (tweet?.context !== 'reply') return null;
-    return planLowSignalFold(observed ?? tweet, semanticRecent.list());
+    const mode = sem.emotion?.mode === 'hide' ? 'hide' : 'fold';
+    return planEmotionFold(observed ?? tweet, semanticRecent.list(), { mode });
   }
 
   const farmTracker = createFarmTracker();
@@ -640,7 +643,7 @@ export function createPipeline(deps) {
         degraded,
         triage,
         junkProbability,
-        semantics: semantics.detail,
+        semantics: { ...semantics.detail, local: lowSignalBeta ? { kind: lowSignalBeta.kind, emotion: lowSignalBeta.emotion, emotionLabel: lowSignalBeta.emotionLabel, mode: lowSignalBeta.mode, representative: lowSignalBeta.representative, groupSize: lowSignalBeta.groupSize } : null },
         farm: { hit: farm.hit, accounts: farm.accounts, key: farm.key, similarity: farm.similarity, repeatInPost },
       },
       farm: farm.hit

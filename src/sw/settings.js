@@ -200,6 +200,7 @@ export const DEFAULT_SETTINGS = {
       foldInFeed: true,
       foldInReplies: true,
       /** 情绪 / 认同 / 确认这类「没有实质内容的附和」：同一线程只留最早的一条（本地判定，0 调用）。 */
+      /** @deprecated v0.4.4 起用 `semantics.emotion.enabled`；为了兼容旧配置仍然读取（false 视为关闭）。 */
       foldLowSignal: true,
     },
     alpha: {
@@ -210,6 +211,7 @@ export const DEFAULT_SETTINGS = {
       minReferences: 3,
       maxReferences: 12,
     },
+    emotion: { enabled: true, mode: 'fold' },
     maxPerMinute: 10,
     maxPerDay: 300,
   },
@@ -334,6 +336,12 @@ export function normalizeSettings(raw) {
   s.semantics.beta.foldInFeed = Boolean(s.semantics.beta.foldInFeed);
   s.semantics.beta.foldInReplies = Boolean(s.semantics.beta.foldInReplies);
   s.semantics.beta.foldLowSignal = Boolean(s.semantics.beta.foldLowSignal);
+
+  // ---- 情绪言论（愤怒 / 喜悦 / 支持 / 反对 / 悲伤 / 确认 / 表情）----
+  // enabled：是否启用；mode：fold = 同类留一条代表 + 其余折叠，hide = 全部折叠（用户说的「删除」）。
+  s.semantics.emotion = isPlainObject(s.semantics.emotion) ? s.semantics.emotion : {};
+  s.semantics.emotion.enabled = s.semantics.emotion.enabled === undefined ? true : Boolean(s.semantics.emotion.enabled);
+  s.semantics.emotion.mode = s.semantics.emotion.mode === 'hide' ? 'hide' : 'fold';
   s.semantics.alpha.enabled = Boolean(s.semantics.alpha.enabled);
   s.semantics.alpha.onlyInReplies = Boolean(s.semantics.alpha.onlyInReplies);
   s.semantics.alpha.threshold = clampNumber(s.semantics.alpha.threshold, 0, 1, 0.7);
