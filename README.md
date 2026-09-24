@@ -395,8 +395,9 @@ JEV_API_KEY=xxx JEV_PRESET=typesafe node tools/live-check.js
 
 ## 13. 许可证
 
-MIT（见 [LICENSE](LICENSE)）。第三方组件：内置的 `src/vendor/jev-systemone/`（TypeSafe Jev 官方
-TypeScript 客户端）为 MIT 许可、原样收录，见该目录的 `LICENSE` 与 `VENDOR.md`。
+MIT（见 [LICENSE](LICENSE)）。随仓库分发的唯一第三方组件是内置的
+`src/vendor/jev-systemone/`（TypeSafe Jev 官方 TypeScript 客户端，MIT、原样收录），
+来源、校验和与收录方式见 [THIRD-PARTY.md](THIRD-PARTY.md)。
 
 本工具只服务于**你自己的时间线卫生**：它读取你浏览到的推文、按你的配置判定与隐藏，
 自动静音/拉黑是可关闭、默认演练的显式选择；不提供任何批量举报或攻击他人的能力。
